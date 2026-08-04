@@ -1,0 +1,10 @@
+# Start advances from title into the menu; the menu must be lit and colourful.
+run 200
+press start 8
+run 90
+shot menu
+# Moving the cursor should change a FEW pixels, not jump to a new screen
+# (guards the 6-button-pad-mirroring bug where Down reads as a launch).
+press down 4
+run 40
+shot menu_item2
