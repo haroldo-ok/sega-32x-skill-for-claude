@@ -1,0 +1,157 @@
+# Porting workflow
+
+Goal: take a game written for some other platform (DOS/x86 real-mode, C,
+Turbo Pascal, a Genesis title, an emulator core, a modern C/C++ engine…) and
+produce a playable, verified `.32x`. The method below is what the reference
+ports (SkyRoads, Pong Kombat, God of Thunder, etc.) actually use.
+
+## Principle: platform-clean core + thin 32X shell
+
+Split the game into two layers on day one:
+
+- **`src/core/`** — portable C11 with **no OS calls, no floating point in the
+  hot path, endian-clean**. Game state, physics, AI, level logic, and the
+  software renderer that fills an indexed-color buffer. This layer must build
+  and run on a normal PC too.
+- **`src/platform/<target>/`** — thin shells that provide the core with input,
+  a framebuffer, audio, timing, and file/asset access. You will have at least
+  the `32x` shell; add an `sdl` desktop shell as a **test oracle**.
+
+Why the split matters: the SDL build lets you debug game logic on a fast
+machine with a debugger, and lets you diff the port against the original with
+identical inputs. Bugs that would be black screens on hardware become ordinary
+assertions on desktop. The 32X shell then stays small and hardware-focused.
+
+## Step 1 — Get the source and understand the target
+
+- Fetch the original source and/or data. State the license situation honestly:
+  ship code and build-time converters, but **do not commit the original game's
+  copyrighted data**; have the user supply it and document where it goes
+  (this is exactly how the reference ports handle SkyRoads/Pong Kombat data).
+- Identify the **tick rate** and the **timing model**. DOS games often
+  reprogram the PIT; e.g. SkyRoads advances at ~36.0036 Hz derived from a
+  180 Hz interrupt. Capture the exact rational (num/den) and drive the core at
+  that average rate with an accumulator — do not just run "once per frame".
+- Identify the **rendering model** (tile? raster? 3D? framebuffer blit?) and
+  the **asset formats** (compression, palettes, sample formats, endianness).
+
+## Step 2 — Stand up the portable core + desktop shell first
+
+Before touching the 32X:
+
+1. Port the game logic into `src/core/` as portable C11.
+2. Write `src/platform/sdl/main_sdl.c`: create a window, feed the core inputs,
+   present its indexed framebuffer through a palette, drive the tick with the
+   rational accumulator.
+3. Get it *playable on desktop*. This is your oracle and your fast iteration
+   loop. If the original ships a demo/replay recording, feed it in and confirm
+   the run reproduces — that is a strong regression test.
+
+If the engine can't be brought up all at once, extract a **self-contained
+slice** (one subsystem plus its real data — e.g. an animation/state-machine
+interpreter) as HAL-free C that compiles for both host and target, and pin its
+behaviour with a host unit test before cross-compiling. Real logic verified on
+the host is logic you don't have to debug through the emulator later.
+
+## Step 3 — Convert assets at build time
+
+Write Python (or C) tools under `tools/` that turn the original data into
+32X-ready, big-endian blobs decoded into ROM:
+
+- Graphics → indexed pixels + a CRAM palette (256 entries, or your subframe).
+- Music → **VGM 1.50** for the 68000 YM2612/PSG player (map channels, envelopes,
+  loop points; keep the original tick cadence).
+- Sampled audio → raw PCM with known sample rate for the slave-SH-2 PWM mixer;
+  normalize disparate levels.
+- Level/data tables → packed, byte-swapped structs.
+
+Emit these as `.c`/`.s` blobs (or `.incbin` binaries) linked into ROM so there
+is **no runtime file I/O and no big heap allocation**. Make regeneration a make
+target guarded by a stamp file.
+
+## Step 4 — Bring up the 32X shell incrementally
+
+Do these in order and run the emulator test after each — resist the urge to
+wire everything at once, because a black screen with ten new subsystems is
+un-debuggable.
+
+1. **Boot + solid color.** `Mars_Init`, `Mars_InitVideo`, fill the framebuffer
+   with a non-zero palette color, flip. The emulator test should now see a lit,
+   single-color frame. If it is black, the problem is boot/VDP/palette, not your
+   game — fix it here.
+2. **Palette + a static image.** Seed the real palette, blit one converted
+   image. Confirm colors (not silhouettes). If shapes are black, the palette is
+   not loaded.
+3. **The core's renderer → framebuffer.** Point the core at the 32X back buffer.
+   Confirm the title/first screen matches the desktop oracle.
+4. **Input.** Wire `Mars_ReadController` (masked to 3-button) to the core's
+   input. Add a scripted test that presses Start/d-pad and asserts state
+   transitions.
+5. **Timing.** Drive the core tick from `mars_vblank_count` with the same
+   rational accumulator as the SDL shell so game speed matches the original.
+6. **68000 music.** Embed the VGM blob + player; verify audio is non-silent in
+   the test (peak/energy thresholds).
+7. **Slave-SH-2 audio (PWM) and/or a render phase.** Offload via COMM. Verify
+   SFX presence and that VBlank service never stalls.
+
+## Step 5 — Verify, don't hope
+
+Wire up `assets/verify_rom.py` (static) and `assets/run_tests.py` +
+`harness.c` (headless PicoDrive) as described in `references/testing.md`. Add a
+point-to-point script per real state: boot → title → menu → gameplay, plus
+regressions for anything you fixed (e.g. the d-pad-as-jump masking bug).
+
+## Step 6 — Optimize
+
+Only after it is correct. See `references/optimization.md`. Common wins for a
+fresh port: move audio mixing to the slave SH-2, switch float→fixed-point,
+precompute tables, and shrink the internal render resolution.
+
+## Common porting pitfalls
+
+- **Endianness**: DOS/x86 data is little-endian; the SH-2 is big-endian.
+  Byte-swap at conversion time, not scattered through the game.
+- **Floating point**: fine on desktop, disastrous in 32X hot loops. Convert to
+  fixed-point in the core so both shells share it.
+- **`malloc` of large buffers**: 256 KiB SDRAM disappears fast. Keep big data
+  in ROM.
+- **Assuming one frame == one tick**: decouple rendering from the fixed logic
+  tick or the game will run at the wrong speed.
+- **6-button pad bits**: mask them (see architecture.md, Controllers).
+- **Shipping copyrighted data in the repo**: don't; convert at build time from
+  user-supplied originals.
+
+## Converting original game data (DOS/other) to a ROM archive
+
+When porting a game that ships a data file (levels, tiles, sprites, tables),
+convert it **once at build time** into a linear, ROM-embeddable archive rather
+than parsing the original format at runtime. This is how God of Thunder 32X
+handles its resource file (`tools/mkassets.py`); the pattern generalizes:
+
+1. **Decompress / unpack** any compressed payloads (e.g. LZSS) in the build tool.
+2. **De-plane bitmaps.** DOS Mode-X and EGA/VGA planar art is stored in 4 bit
+   planes; convert it to **linear chunky** pixels (one byte per pixel) matching
+   the 32X's 8bpp packed framebuffer, so blitting is a straight copy.
+3. **Byte-swap 16-bit fields to big-endian.** The SH-2 is **big-endian**; DOS
+   data is little-endian. Any `s16`/`u16`/`s32` field you want to read directly
+   as a C struct/array from ROM must be byte-swapped when packing. If you skip
+   this, values read as byte-swapped garbage on hardware — and it won't show on
+   a little-endian host test. Swap the halfwords at pack time and the C side can
+   read the archive in place with no runtime conversion.
+4. **Lay it out for read-in-place.** Emit a simple header + offset table so the
+   game reads assets straight from ROM (`0x02000000`, cacheable, read-only).
+
+**Memory payoff:** assets that live in ROM cost **zero** of the 256 KB SDRAM.
+Only *mutable* state (the current level's changeable tiles, actor state, etc.)
+goes in SDRAM. This is what lets a multi-megabyte game fit — the ROM can be up
+to a few MB while RAM stays tiny. Budget RAM for mutable state only.
+
+**IP note:** this describes the *technique*. Whether you may embed a specific
+game's converted assets in a distributed ROM depends on that game's license —
+some of these examples use public-domain source and/or shareware data the author
+had rights to. The conservative default for new work remains: ship clean-room
+assets, and provide a build step so a user converts original data **they own**.
+The clearest model is WinWar / `warcraft-32x`: it ships **no** copyrighted
+executable code or assets and reads a **user-supplied** `DATA.WAR` at build
+time. Follow that pattern — reimplement the engine, and have the user bring the
+data file they legally possess.

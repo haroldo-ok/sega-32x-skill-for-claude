@@ -1,0 +1,13 @@
+# Enter gameplay and confirm the scene is live and changing.
+run 200
+press start 8
+run 60
+press start 8
+run 120
+shot play_a
+hold up
+run 120
+shot play_b
+release up
+run 120
+shot play_c

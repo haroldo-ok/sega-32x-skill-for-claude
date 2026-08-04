@@ -1,0 +1,5 @@
+# The ROM must reach a drawn title/first screen and keep animating.
+run 240
+shot title
+run 120
+shot title_later
