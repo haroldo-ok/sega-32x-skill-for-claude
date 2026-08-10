@@ -176,3 +176,90 @@ output** and compare it to a reference:
 So: host-verify the mixer logic always; add a PCM-capture + spectral-fingerprint
 test when audio correctness matters. Only claim "audio confirmed" when one of
 these actually ran — a wired-but-unrun PWM path is "wired", not "confirmed".
+
+## Hard-won harness & debugging lessons
+
+### A fresh scaffold can produce a black/hung ROM even from correct sources
+
+Observed (`zepton32x`): a freshly-scaffolded project tree booted to black even
+from a *minimal* boot program and even from another project's known-good `main`,
+despite **byte-identical** HAL sources, an identical 68000 boot blob, and a
+harness that ran a known-good ROM fine. The two ROMs differed beyond the header
+(into the SH-2 vector table and code), i.e. the build produced different output
+from the same sources — some subtle tree/build-state corruption that resisted
+diagnosis.
+
+**Resolution that works:** stop chasing it. Rebuild the project from a **full
+copy of a known-good tree** (`rm -rf newproj && cp -r goodproj newproj`), confirm
+that copy still boots, and *then* swap in the new game code file-by-file. This
+sidesteps whatever differed and costs minutes instead of hours. Keep one
+known-good 32X tree around specifically to clone from.
+
+### Isolate "render vs logic" with an unconditional draw
+
+When something "isn't showing", don't assume the logic is broken. Draw it
+**unconditionally** (a fixed marker in the draw function, or force one entity
+alive at init). If the marker renders, the draw path and palette are fine and the
+bug is in spawn/update logic; if not, it's the draw/palette. This split
+immediately located a Zepton "enemies missing" bug as a *framerate* issue (below),
+not a render bug.
+
+### "run N" emulated frames ≠ N game iterations
+
+A heavy renderer runs the game loop at a fraction of 60 fps in the emulator (see
+the frame-counter measurement in `optimization.md`). Zepton ran ~8–19 game
+iterations per 60 emulated frames. Consequences for scripts and interpretation:
+
+- Spawn timers, cooldowns, and approach speeds count **game iterations**, not
+  emulated frames. If enemies spawn every 40 iterations and the loop runs at
+  ~12 fps, they don't appear for ~200 emulated frames — `run 60; shot` captures
+  an empty field and looks like a bug. Make scripted waits generous, or lower
+  timers for the test.
+- A brief visual (a laser lasting 10 iterations) can fall *between* your capture
+  frames. Capture several frames across the window, not one.
+
+### Pixel-detection false-positives — use a colour no other object shares
+
+Detecting an object by colour is only valid if that colour is unique. A bullet
+yellow `#fff03c` sat within threshold of a sand terrain colour `#d2be78`, so the
+detector reported "bullets present" from terrain pixels while the real bullets
+were elsewhere. Give each testable object a **distinct palette entry** and match
+with a **tight threshold** (and sanity-check by scanning a region you know is
+empty of that object).
+
+### Diagnose the harness→console button mapping empirically
+
+The libretro→Genesis button map is core-dependent. For this PicoDrive core the
+script names map as **`a`→Genesis C, `b`→Genesis B, `c`→Genesis A**, and
+**Start on frame 0 (pre-boot) doesn't register** — `run 20–30` before pressing
+Start. Held buttons **stack** (the harness ORs a bitmask), so `hold a` + `hold b`
+gives both. When a combo (e.g. "both fire buttons = laser") won't trigger, don't
+guess: draw one on-screen marker per `SEGA_CTRL_A/B/C` bit and read which lights
+up for each script button.
+
+## Deterministic desktop-oracle testing (record/replay)
+
+The strongest test for a port with a shared portable core is **bit-exact
+determinism between a desktop build and the ROM**. Reference: an AGPL 3D marble
+port whose PicoDrive tests replay a PC-recorded winning run tick-for-tick.
+
+Requirements and method:
+
+- The **core is compiled verbatim** for both the desktop oracle and the 32X (no
+  `#ifdef` divergence in game logic). Same input sequence ⇒ identical run.
+- The oracle shell exposes `--headless --bot --record <file>` / `--replay
+  <file>`: record a known-good playthrough (a bot or a human) on the PC, save the
+  input sequence, and **replay the same inputs against the ROM** in the harness.
+- Assert the ROM reaches the same checkpoints/outcome the oracle produced. Any
+  divergence is a real portability bug (often a compiler trap or an
+  endian/`long`-width issue), caught mechanically instead of by eye.
+
+### Fixed-tick pacing makes the input grid deterministic
+
+Determinism needs a **fixed game-tick**, decoupled from render time. If the
+master's per-frame work is ~30 ms, pace the game at exactly **3 vblanks per tick
+(20 ticks/s NTSC)** rather than "as fast as it renders". Then a recorded input
+grid lines up tick-for-tick between oracle and ROM. Consequence for scripts: the
+harness feeds recorded input **tripled** (3 emulated frames per game tick) to
+match the pacing. (This is the flip side of the "run N ≠ N iterations" caveat:
+here you *fix* the ratio on purpose so it's exactly known.)

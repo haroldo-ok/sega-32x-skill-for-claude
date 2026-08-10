@@ -72,3 +72,51 @@ genuinely too busy.
 The *video* screenshot harness can't hear anything, but audio is still
 testable: capture the emulator's **PCM output** and compare a spectral/tonal
 fingerprint against a reference render. See `testing.md` ("Verifying audio").
+
+## An 8-voice tracker mixer (S3M-style) → stereo PWM
+
+Beyond a handful of SFX voices, a full **software tracker** runs comfortably on
+one SH-2. Reference: a shipped PWM tracker player that mixes **eight** virtual
+tracker voices down to the two physical PWM outputs at **11,025 Hz**.
+
+- Keep exactly N `Voice` structs (8), each with independent **sample position,
+  loop bounds, pitch, volume, and stereo pan**. Tracker row events (from
+  S3M-derived data) address channels 1–8 and update those fields.
+- Each output tick, advance every active voice's fractional sample position,
+  fetch+scale its sample, sum to left/right accumulators, clamp, and push one
+  amplitude to each FIFO. Eight simultaneous notes on row 0 is the stress test.
+- **Priority SFX policy**: reserve the ability for a triggered SFX to steal or
+  duck a voice so laser/impact effects cut through the music, then restore.
+- The only registers used are the PWM ones — no YM2612/PSG/CD:
+
+```
+0x20004030  PWM control      0x20004034  PWM left FIFO
+0x20004032  PWM cycle        0x20004036  PWM right FIFO
+```
+
+Keep the mixer fed every frame regardless of render load (the FIFO-starvation
+gotcha above). If a heavy renderer can stall it, mix on the **slave SH-2**.
+
+## Alternative: native Genesis music (XGM/SGDK) with the UI on the SH-2
+
+The 32X still contains a full Genesis: **YM2612 + PSG driven by the 68000/Z80**.
+For chiptune/VGM music you can skip PWM entirely and let the **Genesis side play
+the music** while the SH-2 does the UI/game. Reference: an XGM player cartridge
+using **SGDK's XGM driver**.
+
+- **68000 side** (built with SGDK, `libmd.a`, linked into the 32X's 68000 ROM
+  window at `0x880800`): loads the XGM/Z80 driver, calls `XGM_startPlay` /
+  `XGM_pausePlay` / `XGM_stopPlay`, polls the pad with `JOY_readJoypad`, and
+  reports status/elapsed.
+- **SH-2 side**: the UI — track list, now-playing metadata, progress bar,
+  equalizer — rendered to the 32X framebuffer.
+- **They cooperate over the COMM registers** (SH-2 at `0x20004020`, 68000 at
+  `0xA15120`): the SH-2 posts play/pause/stop/next commands; the 68000 posts
+  status back. The 32X boot blob enables the adapter (ADEN), releases the SH-2s
+  (nRES), and jumps the 68000 to the player.
+
+Choose **PWM** (mixer/tracker/PCM, all on SH-2) when you want sample playback and
+full SH-2 control of the sound; choose **XGM/SGDK** when you want authentic
+YM2612/PSG Genesis music with minimal SH-2 audio code. Streamed **PCM through
+PWM** (a rail shooter embedded a dozen PCM clips and mixed them through the PWM
+FIFO) is the third option for voice/SFX-heavy games.

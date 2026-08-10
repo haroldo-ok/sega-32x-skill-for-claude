@@ -155,3 +155,54 @@ The clearest model is WinWar / `warcraft-32x`: it ships **no** copyrighted
 executable code or assets and reads a **user-supplied** `DATA.WAR` at build
 time. Follow that pattern — reimplement the engine, and have the user bring the
 data file they legally possess.
+
+## Licensing & IP when porting someone else's game
+
+Ports touch other people's copyrighted work. The mechanics of a game aren't
+copyrightable, but its **code, art, music, and specific level data** are. Sort
+the target before writing code:
+
+- **Open-source code (GPL/MIT/etc.)** — legitimate to port. For **GPL**, the
+  port is a derivative work and must **stay GPL** and credit the author. Study
+  the source and **reimplement the algorithm in your own C** (a port), rather
+  than pasting the original verbatim into your output. Examples ported this way:
+  a GPLv3 PICO-8 voxel shmup (`zepton32x`, Zepton by REZ).
+- **Asset licenses are separate from the code license.** Zepton's code is GPLv3
+  but its assets are **CC BY-NC 4.0**. For CC-BY-NC: attribute, keep the port
+  **non-commercial**, and prefer **shipping original/procedural assets** over
+  copying the licensed art. Zepton's terrain is procedural and its ship is an
+  original voxel model — no CC-BY-NC art was copied.
+- **Sanctioned / user-supplied** — the clearest case: the rights-holder gave you
+  the game and asked for the port (e.g. an author who DM'd their HTML5 game for a
+  console conversion, `shmup32x`). Reproduce it faithfully; still ship no
+  third-party assets you don't have rights to (often there are none — canvas/
+  procedural games have no asset files).
+- **Proprietary, no license, ripped assets** — decline. A faithful port of an
+  active-IP commercial game bundling ripped art/audio is not something to build;
+  offer a clean-room original in the same genre instead.
+
+Practical rule: **ship only assets you have the right to redistribute** — either
+original/procedural, or faithfully reproduced when the source is open/sanctioned
+and its license is honoured (keep GPL, attribute, respect NC). State the licenses
+and attribution in the project README.
+
+## Third-party assets inside a port (mocap, fonts, sampled audio)
+
+Ports sometimes need assets from a *different* source than the game itself — free
+mocap for a fighter's animations, a font, sampled audio. Keep provenance clean:
+
+- **Don't ship the raw source assets** you only used at build time. A DirectX
+  fighter port baked its walk/attack poses from free CMU/RancidMilk **mocap** but
+  ships only the derived keyframes, not the motion-capture files, and documents
+  the pipeline in `docs/MOCAP_BAKE.md` + a `THIRD_PARTY_NOTICES.md`.
+- **Bundle no textured/copyrighted menu art**; reconstruct UI with clean-room
+  polygons/fonts matching the original's layout.
+- **AGPL** targets (a marble game) behave like GPL for distribution — keep the
+  port under the compatible copyleft licence and publish source.
+- Record every third-party asset's licence and attribution in the repo
+  (`THIRD_PARTY_NOTICES.md` / `CREDITS.md`), and never treat an example ROM that
+  embeds someone's music as a licence to redistribute that music separately.
+
+The through-line with the open-source rules above: **ship only what you have the
+right to ship**, derive-and-document when you transform third-party data, and
+prefer clean-room reconstruction whenever the licence is unclear.

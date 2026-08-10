@@ -44,3 +44,88 @@ code nor their embedded game assets.
   mixer through the stereo PWM FIFOs, priority SFX by voice-stealing, a source
   converter, *and a PCM-capture audio test*. The reference for `audio.md` and
   for the audio-verification method in `testing.md`.
+
+## Worked example — a 2D vertical shmup (`shmup32x`)
+
+A faithful clean-room port of a sanctioned HTML5 canvas shooter (the author
+supplied the game and asked for the 32X conversion). No 3D engine — packed 8bpp
+framebuffer plus the shape primitives from `2d-and-shmup.md`.
+
+- Built in verified milestones: M1 core loop (starfield, player, typed enemies,
+  collisions) → M2 swarms + a boss with radial/spread bullet patterns → M3
+  power-ups (spread shot, shield) → M4 particle explosions + a full
+  title/ship-select/difficulty/game-over flow → M5 PWM sound + in-session high
+  score.
+- Then a **faithful-graphics pass**: read the original canvas draw code, pulled
+  exact hex colours and polygon vertices, and reproduced the four ships, typed
+  enemy shapes, and winged boss with `GFX_FillPoly/FillTri/FillCircle`.
+- Lessons it contributed: reset must zero whole entity pools (ghost-boss bug);
+  event-driven sound to keep the game module HAL-free; menus need colour to pass
+  the black-screen guard; update input scripts + markers when you add a menu.
+
+## Worked example — a voxel-landscape shmup (`zepton32x`)
+
+A GPLv3 clean-room port of REZ's *Zepton* (a Comanche-style "2d voxel shmup"
+from a PICO-8 cart). Introduced the **voxel-landscape** renderer
+(`voxel-landscape.md`) — a scrolling procedural heightmap drawn as
+perspective-scaled cells with a hoisted per-slice reciprocal divide.
+
+- Milestones: M1 scrolling voxel terrain → M2 player ship (original voxel model)
+  + lock-on reticle → M3 into-the-screen bullets + homing missiles → M4
+  approaching enemies + reticle lock + scoring → M5 blue/red bonuses + laser +
+  energy/game-over → M6 PWM sound (engine hum + fire/boom/hit) + title screen.
+- A dedicated **performance pass** (measured, not guessed) and an honest
+  **per-column raycaster experiment that was measured slower and not shipped**
+  (see `optimization.md` and `voxel-landscape.md`).
+- IP: kept GPLv3, credited REZ, procedural terrain + original ship (Zepton's
+  CC-BY-NC art not copied). See `porting-workflow.md`.
+- Also the source of the "rebuild from a known-good tree" black-screen fix in
+  `testing.md`.
+
+## Studied ecosystem — shipped 32X ports to mine for technique
+
+A catalogue of real, working 32X ports (haroldo-ok's, studied for technique with
+attribution — reproduce the *methods*, honour each project's own upstream
+licence). Grouped by what they best demonstrate.
+
+### PICO-8 ports (see `pico8-porting.md`)
+- **apex-vector-60-32x** — a PICO-8 **Mode-7 racer**. Best reference for the
+  `pico8_api` compat layer, scanline depth LUT (`z_fov_table`), tile-lookup
+  bitshift/LUT, fixed-point sprite stepping, 32-bit-aligned framebuffer writes,
+  and attract/demo mode. https://github.com/haroldo-ok/apex-vector-60-32x
+- **hit8ox-32x** — a PICO-8 **3D fighting game**; free 3D arena, 117
+  keyframe-interpolated poses, per-body-part colour customization; deliberately
+  silent (original never called `sfx()`). https://github.com/haroldo-ok/hit8ox-32x
+- **picohot-32x** — a PICO-8 **SUPERHOT** homage; real 3D floor/walls/panes +
+  box/pyramid meshes, time-scales-with-movement, 160×112→320×224 doubling.
+  https://github.com/haroldo-ok/picohot-32x
+- **trial-of-the-sorcerer-32x** — a PICO-8 **raycaster** dungeon crawler; strafe
+  controls; source of the `rom/obj` snapshot-exclusion + `setup.sh`-reinstall
+  gotchas. https://github.com/haroldo-ok/trial-of-the-sorcerer-32x
+- **pico-city-builder-32x** — a PICO-8 **city-builder sim**; grid sim, BFS road
+  pathfinding, day/night palette shift, 4-voice PWM, ~7 KiB SDRAM.
+  https://github.com/haroldo-ok/pico-city-builder-32x
+
+### Software-3D games (see `software-3d.md`)
+- **tempest-2k-32x** — a **vector tube shooter**; 16 3D webs, translucent lane
+  polys, dual-SH2 (slave = real-time PWM synth + 140 BPM techno loop).
+  https://github.com/haroldo-ok/tempest-2k-32x
+- **fighting-game-3D-32X** — a DirectX **3D fighter** retarget; clean-room
+  flat-shaded polys, mocap-baked poses with `THIRD_PARTY_NOTICES`/`MOCAP_BAKE`,
+  painter+backface no-z-buffer, slave-SH2 COMM clear.
+  https://github.com/haroldo-ok/fighting-game-3D-32X
+- **beachy-beachy-ball-32x** — an AGPL **3D marble** physics game; the reference
+  for the **GCC 12.1 SH-2 miscompile traps**, the desktop-oracle record/replay
+  determinism model, and 30 Hz fixed-tick pacing.
+  https://github.com/haroldo-ok/beachy-beachy-ball-32x
+- **pifox-32x** — a **rail shooter** (PiFox); 3D mesh conversion, PNG→CRAM UI,
+  and PCM assets streamed/mixed through PWM.
+  https://github.com/haroldo-ok/pifox-32x
+
+### Audio players (see `audio.md`)
+- **tracker-player-32x** — an **8-voice S3M-style tracker** mixed to the stereo
+  PWM FIFOs at 11,025 Hz with priority SFX. The key PWM-audio reference.
+  https://github.com/haroldo-ok/tracker-player-32x
+- **xgm-player-32x** — a **Genesis-side XGM/SGDK** player (68000+Z80 driving
+  YM2612/PSG) with the UI on the SH-2, cooperating over COMM registers.
+  https://github.com/haroldo-ok/xgm-player-32x
