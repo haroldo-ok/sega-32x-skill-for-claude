@@ -3,18 +3,18 @@ name: sega-32x-gamedev
 description: >-
   Create, improve, optimize, and port games for the Sega 32X (Sega Mars) using
   Chilly Willy's 32XDK toolchain and the DOOM 32X Resurrection (d32xr) codebase
-  as reference. Use whenever the user wants to port a game (from DOS,
-  Genesis/Mega Drive, C, Pascal, or any platform) to the 32X, build or debug a
-  homebrew 32X ROM, make a 32X game (2D or a software-3D / polygon game with a
-  fixed-point transform, perspective projection, and flat-shaded triangle
-  rasterizer), use the second SH-2 / dual-core, optimize SH-2 code, fix a 32X
-  ROM that boots to a black screen, or set up automated PicoDrive tests. Trigger
-  even when the user only says "port X to 32X", "make a 32X game", "3D on 32X",
-  "compile this for 32X", mentions a `.32x` ROM, SH-2 / dual-SH2 / 68000 Mars
-  hardware, the mars.ld linker, VDP framebuffer/palette issues, or PWM audio.
-  Prefer this skill over general knowledge for anything touching the 32X: the
-  toolchain, memory map, header format, and test methodology are specific and
-  easy to get subtly wrong from memory.
+  as reference. Use whenever the user wants to port a game (DOS, Genesis,
+  PICO-8, HTML5, or any platform) to the 32X, build or debug a homebrew 32X
+  ROM, or make a 32X game of any kind: software-3D / polygon
+  (fixed-point transform, flat-triangle rasterizer), a Comanche-style voxel
+  landscape / voxel shmup, or a 2D sprite game / shooter / arcade port with
+  menus. Also for the second SH-2 / dual-core, optimizing SH-2 code, measuring
+  framerate, fixing a black-screen ROM, or PicoDrive tests. Trigger
+  even when the user only says "port X to 32X", "make a 32X game", "3D/voxel on
+  32X", "compile this for 32X", mentions a `.32x` ROM, SH-2 / dual-SH2 / 68000
+  Mars hardware, the mars.ld linker, VDP framebuffer/palette issues, or PWM
+  audio. Prefer this skill over general knowledge for the 32X: its toolchain,
+  memory map, and test methodology are easy to get subtly wrong.
 ---
 
 # Sega 32X game development & porting
@@ -33,15 +33,23 @@ in doubt about how to do something on real hardware, look at how d32xr does it.
 - 32XDK releases: https://github.com/viciious/32XDK/releases
 
 
-For **3D games** (a software polygon pipeline — no GPU/FPU on the 32X),
-see `references/software-3d.md` and the ready-made engine in `assets/3d/`
-(fixed-point transform, reciprocal-divide projection, flat-triangle
-rasterizer). Two games shipped on it (a rally racer and a rail shooter).
+Pick a **rendering family** for the game:
+
+- **Software polygon 3D** (fixed-point transform, reciprocal-divide projection,
+  flat-triangle rasterizer — no GPU/FPU) → `references/software-3d.md` and the
+  ready-made engine in `assets/3d/`. Games shipped: a rally racer, a rail
+  shooter, kart racers (polygon and Mode-7).
+- **Voxel landscape** (Comanche-style scrolling heightmap of perspective-scaled
+  cells; camera above a near plane; per-slice hoisted divide) →
+  `references/voxel-landscape.md`. Game shipped: a voxel shmup (Zepton).
+- **2D sprites** (packed 8bpp framebuffer + scanline shape fills; menus, shmups,
+  arcade ports) → `references/2d-and-shmup.md` and `assets/2d/gfx_shapes.c`.
+  Game shipped: a faithful vertical shooter with a full menu flow.
 
 
-For **worked examples** of complete 32X ports (a DOS software-3D racer, an
-HTML5 game, and a DOS action-adventure with a 68000 side and an asset
-pipeline), see `references/examples.md`.
+For **worked examples** of complete 32X ports (a DOS software-3D racer, HTML5
+games, a voxel PICO-8 shmup, and a DOS action-adventure with a 68000 side and an
+asset pipeline), see `references/examples.md`.
 
 
 For **sound**, see `references/audio.md` (PWM stereo FIFO, a software voice
@@ -84,11 +92,13 @@ Full details, exact flags, and CI-cache tricks: **`references/toolchain-and-buil
 
 ## Pick the workflow
 
-- **Porting an existing game** (DOS, Genesis, a C/Pascal codebase, an emulator
-  core, etc.) → read **`references/porting-workflow.md`**. This is the most
-  common request. The core idea: split the game into a *platform-clean core*
-  and a *thin 32X shell*, get it running on desktop first as an oracle, then
-  bring it up on hardware incrementally.
+- **Porting an existing game** (DOS, Genesis, PICO-8, HTML5, a C/Pascal
+  codebase, an emulator core, etc.) → read **`references/porting-workflow.md`**.
+  This is the most common request. The core idea: split the game into a
+  *platform-clean core* and a *thin 32X shell*, get it running on desktop first
+  as an oracle, then bring it up on hardware incrementally. **PICO-8 carts** are
+  a recurring target with a reusable compatibility layer — see
+  **`references/pico8-porting.md`**.
 - **Creating a new native 32X game from scratch** → start from the project
   layout below and `references/architecture.md`; the porting doc's "bring-up
   order" still applies.
@@ -206,6 +216,10 @@ When asked to "optimize the code":
   `ATTR_DATA_CACHE_ALIGN` in d32xr) and clear cache lines deliberately.
 - Build `release` with `-Os -flto -fomit-frame-pointer -ffunction-sections
   -fdata-sections -Wl,--gc-sections`.
+- **Beware the GCC 12.1 SH-2 miscompile traps** (12-byte struct returns, 64-bit
+  multiply chains, dropped stores, calls across mixed `-O` levels): if a
+  *correct* program misbehaves only on hardware, see the workarounds in
+  `references/toolchain-and-build.md` before doubting your logic.
 - Look at d32xr's `r_phase*.c`, `sh2_*.s`, and `marsnew.c` for concrete idioms.
 
 ## Bundled resources
@@ -216,8 +230,25 @@ When asked to "optimize the code":
   framebuffer & palette, PWM audio, VGM music, controllers, inter-CPU COMM.
 - `references/porting-workflow.md` — the step-by-step port method (core/shell
   split, desktop oracle, asset conversion, timing model, incremental bring-up).
-- `references/optimization.md` — SH-2 optimization patterns drawn from d32xr.
+- `references/software-3d.md` — the flat-polygon 3D pipeline + `assets/3d/`.
+- `references/voxel-landscape.md` — Comanche-style voxel terrain (cell-billboard
+  vs per-column raycaster, projection, the compute-vs-fillrate trade), plus the
+  into-the-screen projectile/enemy model.
+- `references/2d-and-shmup.md` — 2D sprite games: shape primitives, menu/flow
+  state machines, faithful-graphics reconstruction from source, event-driven
+  sound.
+- `references/pico8-porting.md` — porting PICO-8 carts: the `pico8_api` compat
+  layer (palette→CRAM, sspr/pal/print, btn/atan2 conventions), data extraction,
+  resolution doubling, and the PICO-8/Mode-7 scanline hot-path idioms.
+- `references/audio.md` — PWM FIFO, software voice mixer, PCM-capture verification.
+- `references/optimization.md` — SH-2 optimization patterns from d32xr, **plus
+  how to measure effective framerate through the video harness** and the
+  fillrate-vs-compute playbook.
 - `references/testing.md` — build PicoDrive, the harness + script DSL + runner,
-  black-screen assertions, static ROM verification.
+  black-screen assertions, static ROM verification, **and the hard-won debugging
+  lessons** (rebuild-from-known-good-tree, render-vs-logic isolation, the
+  "run N ≠ N iterations" caveat, pixel-detection false-positives, button-map
+  diagnosis).
 - `assets/` — ready-to-adapt `Makefile`, `mars.ld`, `romfix.py`,
-  `verify_rom.py`, `harness.c`, `run_tests.py`, and example test scripts.
+  `verify_rom.py`, `harness.c`, `run_tests.py`, test scripts, the `3d/` engine,
+  and `2d/gfx_shapes.c` shape fills.

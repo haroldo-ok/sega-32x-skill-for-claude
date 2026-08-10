@@ -169,3 +169,40 @@ Trade-off: the tarball gives a known-good, matched SH-2 + 68000 pair and the
 supply your own MD linker script and confirm the newlib specs. Either way the
 compiler flags (`-m2 -mb`, big-endian), the memory map, and the ROM header/
 checksum fix-up are identical — only the toolchain *provenance* differs.
+
+## GCC 12.1 SH-2 miscompile traps (devkit compiler)
+
+The 32XDK's `sh-elf-gcc` is **GCC 12.1**, and it miscompiles several patterns for
+SH-2 — the program is valid C, passes on a desktop host, and misbehaves only on
+hardware/emulator. These were hit and worked around in a shipped physics game
+(beachy-beachy-ball). Know them; they masquerade as "impossible" logic bugs:
+
+- **12-byte struct returns** — returning a 3-word struct by value can corrupt.
+  Return through a caller-supplied pointer (out-param) instead.
+- **64-bit multiply chains** — sequences of `long long` multiplies can be
+  miscompiled. Use the SH-2 hardware **MAC**/`dmuls` via small inline-asm or
+  intrinsic macros for the fixed-point multiply, rather than leaning on the
+  compiler's `long long` path.
+- **Dropped stores** — under optimization the compiler can elide a store it
+  wrongly proves dead. If a written value "doesn't take", make the destination
+  `volatile` or route through a pointer it can't reason away.
+- **Calls across mixed optimization levels** — calling between translation units
+  built at *different* `-O` levels can break the ABI assumptions. **Build the
+  whole game at one optimization level** (e.g. everything `-O2`), isolating only
+  a well-understood module (an `-Os` audio mixer) if you must.
+
+Practical defaults that dodge all four: compile the core at a **single `-O2`**,
+prefer **pointer math and MAC macros** over struct-return + `long long` idioms,
+and mark a store `volatile` the moment a value mysteriously fails to persist. If
+a routine is wrong only at `-O3`/`-flto`, drop *that* routine to `-O2` first
+before hunting your own logic.
+
+## Workspace / snapshot gotcha: output directory names
+
+In some sandboxed workspaces the directory *names* `dist/` and `build/` are on
+the snapshot **exclusion** list — anything written there is discarded between
+sessions, so a ROM that "built fine" vanishes. Write build output to
+neutrally-named dirs like `rom/` and `obj/` instead. Relatedly, the toolchain
+under `/opt/toolchains/sega` often lives **outside** the snapshotted workspace
+and won't survive either; keep a `setup.sh` that reinstalls the toolchain (and
+PicoDrive) so `make` can be made whole again with one command.

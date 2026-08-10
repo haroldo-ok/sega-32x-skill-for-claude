@@ -131,3 +131,99 @@ By default the slave SH-2 boots and then **parks in a spin loop** (in `crt0.s`)
    a bigger, riskier step. Do it as its own milestone, not a drive-by.
 
 See `architecture.md` for the COMM job-dispatch protocol.
+
+## Measure before you optimise (and after)
+
+Guessing the bottleneck wastes effort. Two real cases from the voxel port
+(`zepton32x`) where the obvious culprit was wrong:
+
+- Hoisting ~1800 perspective **divides** out of a per-cell loop changed the
+  framerate by **zero** — divides weren't the wall.
+- Shortening terrain **columns** (less overdraw) moved it **12 → 20 fps** — the
+  wall was **fillrate/overdraw**, not arithmetic.
+
+So: measure, change one thing, measure again.
+
+### Measuring effective framerate through the video harness
+
+The PicoDrive harness captures video, not timing. To read the game's *effective*
+framerate, draw a bar whose width encodes the game's own frame counter and read
+it from two captures N emulated frames apart:
+
+```c
+GFX_FillRect(0, 0, (int)(frame & 127), 3, C_WHITE);   /* width == frame & 127 */
+```
+
+```python
+# barw(t0), barw(t1) = white run-length at row 1; N emulated frames between shots
+iters_per_N_frames = (barw(t1) - barw(t0)) & 127        # game iterations, not frames
+```
+
+If the game does one iteration per emulated frame it reads ~N; a heavy renderer
+reads far less (Zepton's terrain ran ~12–19 iterations per 60 frames). See the
+critical consequence in `testing.md`: **"run 60" emulated frames is NOT 60 game
+iterations** when the loop is heavy — spawn timers, cooldowns, and approach
+speeds are counted in *iterations*, so scripted waits must be long enough for the
+game to actually advance.
+
+## Divide-hoisting for per-slice / per-scanline projection
+
+When many points share a divisor (all cells in a voxel depth slice, all pixels
+in a Mode-7 scanline), compute the reciprocal **once** and multiply:
+
+```c
+int rf = (FOCAL << 12) / zz;        /* one divide for the whole slice, 12.12 */
+sx = 160 + (((wx>>8) * rf) >> 12);  /* per point: a multiply + shift */
+```
+
+Unit-test the fast path against the reference divide (match within 1px). It
+reduces SH-2 CPU even when it doesn't move a fillrate-bound framerate — headroom
+for real hardware and for adding entities.
+
+## Fillrate & overdraw are often the wall on the 32X
+
+The framebuffer is uncached I/O; every pixel written costs. Painter's-order
+renderers (voxel billboards, sprite stacks) can write each screen pixel several
+times. Before micro-optimising arithmetic:
+
+- Reduce **overdraw**: shorter columns, tighter sprites, skip fully-occluded
+  draws, don't redraw static regions.
+- Reduce the **clear**: a full 320×224 clear is ~9 game-iterations of budget in
+  the Zepton loop. Offload it to the slave SH-2 (COMM job), or clear only the
+  sky band if the geometry tiles the rest.
+- Cutting **cell/vertex count** helps only if you were geometry-bound; if
+  fewer cells changes nothing, you're fillrate-bound — attack pixels, not counts.
+
+## Compute-vs-fillrate: raycast vs billboard
+
+A per-screen-column raycaster (no overdraw, sky-only clear) *sounds* faster than
+per-cell billboards, but it samples the heightmap far more often. If the height
+function is trig-heavy, the raycaster becomes compute-bound and can be **slower**
+(measured 8 vs 19 fps in Zepton). Precompute the heightmap once per frame to make
+the raycaster fillrate-bound before adopting it. Full analysis in
+`voxel-landscape.md`. General rule: a rewrite you *built* is not a rewrite you
+should *ship* — adopt it only if it measures better.
+
+## PICO-8 / Mode-7 scanline hot-path idioms
+
+From a heavily-optimized Mode-7 racer (see `pico8-porting.md` for the full port
+context). These turn a floating-point, divide-per-pixel PICO-8 renderer into an
+SH-2-friendly one:
+
+- **Scanline depth LUT** — precompute `z_fov_table[SCREEN_H]` (perspective depth
+  per row) once in init; the floor/Mode-7 loop reads it instead of dividing.
+- **Bitshift + LUT the inner loop** — precompute `sprid_to_gfx_offset[256]` and
+  replace tile/pixel `/` and `%` with `>>`/`&`, cutting the per-pixel work to a
+  couple of shifts and array reads.
+- **Fixed-point sprite stepping** — accumulate 16.16 `step_x/step_y` across a
+  scaled sprite instead of dividing per pixel (>10× on billboard/car scaling).
+- **32-bit-aligned framebuffer writes** — pack four 8bpp pixels into a `uint32_t`
+  and store aligned words; a full 320×224 present lands around ~0.3 ms.
+
+## Attract / demo mode (cheap, expected of arcade ports)
+
+After N seconds of menu inactivity, seed the game with a scripted/bot input
+stream and run a live gameplay demo (a Mode-7 race auto-started after ~7.5 s).
+It reuses the exact game loop, doubles as a always-on smoke test of the render
+path, and is what players expect from an arcade title. The bot input stream is
+also the seed for the deterministic record/replay tests above.

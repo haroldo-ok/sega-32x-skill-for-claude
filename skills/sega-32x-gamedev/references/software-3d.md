@@ -125,3 +125,29 @@ real 32X hardware and are often cheaper for specific genres:
 
 Pick per genre: polygons for free-camera 3D (racers with real geometry, rail
 shooters), Mode-7/road for ground racers, wireframe for vector games.
+
+## Skeletal / keyframe character animation (fighting games)
+
+Two shipped 3D fighters (a PICO-8 port and a DirectX retarget) animate characters
+without a GPU or a skinned-mesh runtime, entirely in fixed-point on the SH-2:
+
+- **Skeleton + segments.** Model a fighter as a small skeleton (e.g. an 18-point
+  skeleton with 13 tapered body segments drawn as capsule-ish prisms). Each
+  segment has dimensions, roll, and cap flags.
+- **Keyframe interpolation.** Store authored **key poses** per move (the PICO-8
+  fighter converted all 117 keyframes from the cart's data). At runtime,
+  interpolate the nearest key meshes for the current move/phase — you get smooth
+  motion from a handful of poses without storing every frame.
+- **Explicit windup / active / recovery phases** drive attacks (punch chains,
+  chained kicks, jumping/crouching variants, projectile specials) rather than a
+  single static mesh; hit/guard/dying/victory are just more key sets.
+- **Per-body-part colour customization** falls out naturally: give each of the
+  13 segments an independent light/dark colour pair in CRAM.
+- **Free 3D arena, not a 2D lane.** Fighters move on the X/Z plane with a
+  side-on camera; render with painter sort + **backface culling and no z-buffer**
+  (a z-buffer is too RAM-expensive on 256 KiB). Mocap can seed the key poses —
+  bake and ship the derived frames, not the motion files (see
+  `porting-workflow.md`).
+
+This is the same fixed-point transform → reciprocal-divide projection →
+flat-triangle rasterizer pipeline as above; only the *pose generation* is new.
