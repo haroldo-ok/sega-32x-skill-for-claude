@@ -158,6 +158,18 @@ checksum and pads the ROM) and a `check` target that runs `verify_rom.py`. Wire
 `run_tests.py` into CI. Build PicoDrive's libretro core once (instructions in
 `references/testing.md`).
 
+**Work in small verified milestones.** Build the game one feature at a time: a
+HAL-free module (`feature.c/.h`, pure C, no `mars.h`) + a host `test_feature.c`
+run with the system `cc`, *then* wire it into `main` and confirm with a PicoDrive
+script + screenshot. Each slice ends green (host tests + `verify_rom` +
+PicoDrive) before the next starts, so a regression can only be the last slice,
+and "done" always means a passing host test *and* an on-screen capture — not "it
+compiled." For content too long to watch frame-by-frame (a full level), build an
+**in-ROM verification accelerator** (a tick-multiplier + protection behind an
+unused button) and publish **COMM-register telemetry** so a headless run can
+assert exact end-state — see `references/testing.md`. Full rhythm in
+`references/porting-workflow.md`.
+
 ## Hard constraints cheat-sheet
 
 Memory map the SH-2 linker (`mars.ld`) must honor:
@@ -202,6 +214,14 @@ When a ROM compiles but shows black, check in this order (details in
    register, or a blocking audio/VGM wait wedged VBlank service.
 6. **Asset blob placed beyond the fixed low-ROM window** the 68000 copies from
    at boot.
+7. **A corrupt build/tree** — if a *minimal* boot ROM is also black and a
+   known-good ROM isn't, the build itself is producing bad output (differences in
+   the SH-2 vector table/code from identical sources). The reliable fix is to
+   rebuild from a `cp -r` of a booting tree. When the cause isn't obvious, work
+   the **empirical black-screen ladder** in `references/testing.md` (read the real
+   frame → palette-0 tell → cycle-colour hang test → minimal boot → isolate
+   render vs logic → `cmp` the ROMs → rebuild from known-good) rather than
+   guessing.
 
 ## Optimization quick rules (full playbook in references/optimization.md)
 
@@ -220,6 +240,11 @@ When asked to "optimize the code":
   multiply chains, dropped stores, calls across mixed `-O` levels): if a
   *correct* program misbehaves only on hardware, see the workarounds in
   `references/toolchain-and-build.md` before doubting your logic.
+- **Frame time is quantised to 60/n** (flip waits for vblank), so optimize to get
+  *under the next vblank boundary*, not for raw pixel counts. For mostly-static
+  scenes use **dirty-rectangle rendering over a cached background** (per-framebuffer
+  dirty lists; HUD cached by content hash) — full playbook in
+  `references/optimization.md`.
 - Look at d32xr's `r_phase*.c`, `sh2_*.s`, and `marsnew.c` for concrete idioms.
 
 ## Bundled resources

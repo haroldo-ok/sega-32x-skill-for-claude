@@ -151,3 +151,27 @@ without a GPU or a skinned-mesh runtime, entirely in fixed-point on the SH-2:
 
 This is the same fixed-point transform → reciprocal-divide projection →
 flat-triangle rasterizer pipeline as above; only the *pose generation* is new.
+
+## Fixed-camera "tunnel" / corridor projection (rails, breakout-in-a-hallway)
+
+When the camera never rotates and only looks straight down `+z` (a first-person
+tunnel breakout, a fixed-view rail segment), projection collapses to **one
+reciprocal per depth slice** and a multiply per point — no matrices:
+
+```c
+fx r  = fx_div(FX_ONE, z + CAM_BACK);     /* one reciprocal per depth */
+sx = cx + fx_mul(x, r) * FOCAL_shifted;   /* sx = cx + x*FOCAL/(z+CAM_BACK) */
+sy = cy - fx_mul(y, r) * FOCAL_shifted;   /* y up => screen y down */
+```
+
+Clamp `z + CAM_BACK` away from zero so geometry at/behind the eye can't produce a
+wild coordinate. Because all points at a given depth share `r`, hoist it (see
+`optimization.md`); a static corridor built from depth-banded quad "rings" can be
+rasterised **once** and cached.
+
+**Tune `FOCAL`, `CAM_BACK`, and the world `Z` extents as a set so the near plane
+matches the viewport — and treat that as a correctness constraint, not a cosmetic
+one.** If the playfield is clamped to the near-plane bounds (a paddle riding the
+arena wall) but the projection makes that plane wider than the 320×224 screen,
+the player's own object slides off-screen in the corners. Gate it with a corner
+screenshot test (`testing.md`), not by eyeballing the centre.

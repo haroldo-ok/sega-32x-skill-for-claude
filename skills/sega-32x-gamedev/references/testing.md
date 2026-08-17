@@ -263,3 +263,142 @@ grid lines up tick-for-tick between oracle and ROM. Consequence for scripts: the
 harness feeds recorded input **tripled** (3 emulated frames per game tick) to
 match the pacing. (This is the flip side of the "run N ≠ N iterations" caveat:
 here you *fix* the ratio on purpose so it's exactly known.)
+
+## The black-screen / hang debugging ladder
+
+A 32X ROM that boots to a solid dark frame is the most common failure, and it
+has many causes (hang before first flip, palette never uploaded, bad build,
+render off-screen). Diagnose it as a **ladder**, cheapest first, instead of
+guessing — this is the exact sequence that resolved a multi-hour Zepton black
+screen:
+
+1. **Read the actual frame, don't trust the "lit" metric.** Dump the captured
+   PPM and print the top colours. One colour filling 320×224 means "nothing drew
+   / hung"; several colours means it's rendering and your detector is wrong.
+2. **Palette-index-0 tell.** If `GFX_Clear(C_SKY)` yields pure black `(0,0,0)`
+   rather than your sky colour, the palette wasn't uploaded **or** the ROM hung
+   before `Mars_SetPalette` took effect — it is *not* a geometry problem. Chase
+   boot, not the renderer.
+3. **Hang vs. mis-palette.** Cycle the clear colour by frame
+   (`GFX_Clear(frame & 3)`) and capture several frames. If they all stay one dark
+   colour, the loop is **hung**; if they change, the loop runs and the bug is in
+   palette or draw coordinates.
+4. **Reduce to a minimal boot.** Replace `main` with `Mars_Init;
+   Mars_SetPalette; loop { GFX_Clear(bright); FillRect; Flip; }`. If the minimal
+   boot is *also* black, the fault is the HAL/build, not your game code.
+5. **Isolate render vs. logic** (see above): unconditional draw / force one
+   entity alive.
+6. **Compare the ROM bytes.** If a minimal ROM is black while a known-good ROM
+   isn't, `cmp -l` the two `.32x`. Differences confined to the header/title are
+   benign; differences in the **SH-2 vector table or code** from identical
+   sources mean the *build* is producing bad output — a corrupt tree/build state.
+6b. **Check the vectors are in the *raw ROM*, not just the ELF.** If the ELF
+   links clean but boots black, verify the module-data payload actually contains
+   the reset vectors (a non-loadable `.sdata` emits padding into the ROM); see
+   the `@progbits` invariant in `toolchain-and-build.md`.
+7. **Rebuild from a known-good tree** (the reliable fix for step 6): `cp -r` a
+   booting project, confirm it still boots, then swap in your code file-by-file.
+
+Each rung is a few minutes and eliminates a whole class of cause; don't skip to
+rewriting game logic before rung 4 has cleared the HAL/build.
+
+## Read game state from SDRAM in the harness (a liveness beacon)
+
+Pixel assertions prove *something* is on screen; a **beacon struct** proves the
+game logic is actually turning over and lets tests assert on real state. Have the
+master SH-2 publish a small struct at a fixed SDRAM address every frame:
+
+```c
+typedef struct { u32 magic; u32 frame; u16 state; u16 score; s16 ball_x, ball_y; } beacon_t;
+/* magic = 'ARK3' so the harness can find/validate it */
+```
+
+The libretro harness reads it out of the core's SDRAM pointer each frame. Two
+gotchas:
+
+- **PicoDrive keeps 32X SDRAM byte-swapped on a little-endian host** — read bytes
+  as `p[off ^ 1]` (and compose 16/32-bit from those swapped bytes). Reading it
+  straight gives garbage that looks like a dead beacon.
+- Validate `magic` before trusting the rest; if it's absent the loop hasn't
+  reached its publish point (still booting, or hung).
+
+With the beacon you can assert "reached `GS_PLAY`", "frame counter advanced N
+ticks", "score increased", "the ball travelled the length of the arena and came
+back" — mechanical checks that a screenshot can't give you.
+
+## Make the whole game core host-testable, and test it hard
+
+Because the game core is HAL-free (`porting-workflow.md`), compile it for the
+host and hammer it — this is what lets you tune physics/feel without flashing a
+ROM. A shipped breakout's `game_host.c` ran **~22,000 assertions**: collision on
+every axis, the ball never escaping the arena, tough/solid brick behaviour,
+power-up effects, life loss, game-over, determinism, and a scripted **"perfect
+player"** that must actually clear level 1. Patterns worth copying:
+
+- **Scripted bot that must win.** A deterministic input sequence that clears a
+  level is the strongest regression test — it exercises the whole simulation and
+  fails loudly if feel/physics drift.
+- **Swept-collision / anti-tunnelling assertion.** Explicitly assert a
+  *full-speed* ball cannot pass **through** a brick wall in a single tick. Fast
+  objects + thin walls + per-tick position updates = tunnelling; test the
+  continuous check, not just the resting case.
+- **Determinism check.** Same seed + same inputs ⇒ identical state, so desktop
+  and ROM can be diffed (see the oracle method above).
+
+## Geometry correctness gated by corner screenshots
+
+When projection interacts with playfield bounds, a "looks fine" centre frame can
+hide an edge bug. A breakout clamps its paddle to the arena wall; if the tunnel
+mouth projects even slightly wider than the 320×224 viewport, the widest paddle
+slides **off-screen in the corners** and the player aims something invisible. The
+fix was a host `make shots` step that renders the widest paddle against all four
+corners and **fails the build** if a projection retune breaks the match. Tie such
+geometric invariants to an automated check, not to eyeballing the middle of the
+screen.
+
+## Make long content headlessly testable: an in-ROM verification accelerator
+
+A full level that takes minutes to play is impractical to verify frame-by-frame
+in the harness — at the emulator's real rate a ~8,100-position level would need
+tens of thousands of captured frames. Build a **verification accelerator into the
+ROM**, gated behind a normally-unused input, so an automated run can fast-forward
+through the whole thing deterministically. The Tyrian ep1-l1 port does exactly
+this on the B button:
+
+- **Tick multiplier** — while held, run **N simulation ticks per rendered frame**
+  (`FAST_TICKS 12`), so one emulated frame advances the game 12 ticks. A ~1,450-
+  frame scripted `hold b` run then covers the entire level to its boss and ending.
+- **Temporary protection** — make the verification pilot invulnerable during the
+  accelerated run so the automated playthrough reaches the end **deterministically**
+  instead of dying to content it isn't dodging.
+
+This costs a few lines, keeps normal play untouched, and is what turns "we think
+the level completes" into a mechanical assertion. (It also interacts with the
+"run N ≠ N game iterations" caveat: with the accelerator the ratio is *known and
+large*, so scripts can be short — but note that the emulator may still present
+~2 video callbacks per SH-2 game-frame, so budget script `run` counts against
+that, not against game ticks.)
+
+## Telemetry via the COMM mailbox (a lighter beacon)
+
+Instead of (or alongside) an SDRAM beacon struct, publish per-frame test state
+through the **COMM registers** the 32X already exposes — simpler for the harness
+to read (no SDRAM byte-swap), and free if the 68000 isn't using those slots:
+
+```c
+/* master SH-2, once per frame */
+MARS_SYS_COMM0  = ty.cash;
+MARS_SYS_COMM4  = (front_weapon << 8) | rear_weapon;
+MARS_SYS_COMM6  = TY_SIGNATURE | (ty.state & 0xFF);   /* 'T'<<8 | state */
+MARS_SYS_COMM8  = ty.level_pos;
+MARS_SYS_COMM10 = ty.event_index;
+```
+
+The harness reads those words each frame and the test asserts **exact end-state**,
+not just "something changed": e.g. state == `TY_STATE_COMPLETE`, `level_pos >=
+8100`, and `event_index == 1009` prove the entire event stream ran to the ending;
+an equipment word == front-13/rear-11 proves the loadout took; a cash/pickup/
+weapon-power triple proves collectibles *mutated state*, not merely drew. Reserve
+a couple of COMM slots as pad-owned (the 68000 writes input there) and use the
+rest for telemetry. This is the mailbox counterpart to the SDRAM beacon above —
+pick whichever your input path leaves free.
