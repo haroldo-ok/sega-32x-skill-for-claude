@@ -227,3 +227,56 @@ stream and run a live gameplay demo (a Mode-7 race auto-started after ~7.5 s).
 It reuses the exact game loop, doubles as a always-on smoke test of the render
 path, and is what players expect from an arcade title. The bot input stream is
 also the seed for the deterministic record/replay tests above.
+
+## The 60/n vblank-quantization model (why "a bit slower" becomes "half")
+
+`Mars_FlipFrameBuffers` waits for vblank, so a frame that takes *n* vblanks to
+build displays at **60/n fps** — a step function, not a smooth curve. The
+framerate can only be 60, 30, 20, 15… A change that pushes a frame from just
+under two vblanks to just over doesn't cost "a few percent" — it drops you from
+60 to 30. This reframes fill-rate work: the goal is to get **under the next
+vblank boundary**, and a blit you thought was cheap can be the straw that crosses
+it. Measure the boundary (frame-counter trick above), not just raw pixel counts.
+
+Concrete from a shipped breakout (`arkanoid32x`, 7 → 60 fps via three *measured*
+fixes):
+
+1. **Precompute polygon edge slopes.** A quad filler doing a 64-bit divide per
+   scanline to walk its edges → replace with 16.16 `dx/dy` slopes computed once
+   per edge. **7 → 14.6 fps.**
+2. **Rasterise static geometry once.** A camera that can't move renders the same
+   backdrop every frame; rasterise it **once at boot** into an offscreen buffer
+   and copy instead of re-rasterising. **14.6 → 29 fps.** (Half the frame time
+   was redrawing an unchanging corridor.)
+3. **Dirty-rectangle compositing** (below). **→ 60 fps**, writing ~932 px/frame
+   instead of ~24,278.
+
+## Dirty-rectangle rendering with a cached background
+
+When most of the screen is static (a fixed camera, a HUD, a board), don't clear
+and redraw — keep a composed **background bitmap** and each frame restore only
+the small rectangles under moving objects:
+
+- Compose the static view (backdrop + board) into `s_bg[]` once, or whenever a
+  cheap **signature** of its inputs changes (rebuild only on change).
+- Each frame: for every moving entity, `add_dirty(x,y,w,h)`, `restore_rect()`
+  that region from `s_bg`, then draw the entity. Steady-state writes drop by
+  ~25×.
+- **Track the dirty list *per framebuffer*.** The 32X page-flips between two
+  buffers, so a rectangle you dirtied this frame is still stale in the buffer you
+  draw *two* frames from now — keep `s_dirty[2][]` / `s_ndirty[2]` and restore
+  the correct buffer's list. Forgetting this leaves smears that appear every
+  other frame.
+- **Cache the HUD the same way, keyed on a hash of what it displays** (score,
+  lives, level). Re-render the HUD only when the hash changes; otherwise it's
+  part of the static background.
+
+## A host-side fill-cost profiler
+
+Add a host tool (`make fillcount`) that runs the renderer's span/quad/blit calls
+against counters instead of a framebuffer and reports **pixels and spans written
+per frame, broken down by element** (backdrop, entities, HUD). This tells a
+*fill-rate* problem (too many pixels) apart from a *per-primitive-setup* problem
+(too many small spans/clips) — the distinction that decides whether to cache
+pixels or batch primitives. Measure first; the breakout's bottleneck was setup
+and re-draw, not fill volume.

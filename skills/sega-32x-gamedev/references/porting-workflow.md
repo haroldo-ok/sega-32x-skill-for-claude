@@ -22,6 +22,33 @@ machine with a debugger, and lets you diff the port against the original with
 identical inputs. Bugs that would be black screens on hardware become ordinary
 assertions on desktop. The 32X shell then stays small and hardware-focused.
 
+## Principle: one small, verified milestone at a time
+
+The reliable rhythm for building *or* porting a 32X game — the one that carried
+the shmup and voxel builds — is a tight loop, one shippable slice per iteration,
+never a big-bang integration:
+
+1. **Write the feature as a HAL-free module** (`feature.c/.h`): pure C11, no
+   `mars.h`, no framebuffer — just the game rules (spawn, move, collide, score).
+   Rendering happens later in `main`; the module only computes.
+2. **Unit-test it on the host** (`tests/test_feature.c`, compiled with the
+   system `cc`): assert the rules — an entity moves the right way, clamps at
+   bounds, a hit kills and scores, the fast path matches the reference within
+   1px. This runs in milliseconds and catches logic bugs the emulator can't show
+   you clearly.
+3. **Wire it into `main`** and draw it (the only place that touches the HAL),
+   keeping event-driven sound and per-object distinct palette colours.
+4. **Verify in the emulator**: a `tests/scripts/*.txt` input script + PPM capture
+   + a pixel/colour assertion, then *look at a screenshot* to confirm it reads
+   right.
+5. **Update the README, package, and present** — then start the next slice.
+
+Each milestone ends green (host tests + `verify_rom` + PicoDrive) before the next
+begins. When something breaks, only the last slice can be responsible. This is
+also what keeps claims honest: you only call a thing "done" once its host test
+and its on-screen capture both pass. See `testing.md` for the harness and the
+black-screen debugging ladder.
+
 ## Step 1 — Get the source and understand the target
 
 - Fetch the original source and/or data. State the license situation honestly:
@@ -206,3 +233,91 @@ mocap for a fighter's animations, a font, sampled audio. Keep provenance clean:
 The through-line with the open-source rules above: **ship only what you have the
 right to ship**, derive-and-document when you transform third-party data, and
 prefer clean-room reconstruction whenever the licence is unclear.
+
+## A GPL engine does NOT make the game's data redistributable
+
+The single most important licensing trap when porting: **the engine's licence and
+the game's *data* licence are independent.** OpenTyrian's engine is GPL, but
+Tyrian 2.1's data ships under a restrictive Epic MegaGames EULA — so a Tyrian
+port can be GPL *source* while its **converted asset bank and the final ROM must
+not be redistributed**. Practical policy (as a shipped Tyrian M1 does it):
+
+- Ship the **converter and code**; have the user run `make setup-data` to fetch
+  the original archive themselves, and **build the asset bank + ROM locally**.
+- **Exclude the generated data blob and the `.32x` from source control and
+  releases** (`obj/generated/*.bin`, `rom/*.32x`) — they contain transformed
+  proprietary data.
+- Say so in `LICENSES.md`: "do not publish the generated asset bank or ROM merely
+  because the engine source is GPL." Point users at the data's own `license.doc`.
+
+This is the same principle as CC-BY-NC assets under GPL code, stated at full
+strength: **redistribute only what each individual input's licence permits**, and
+when the data is proprietary, ship the pipeline, not the product.
+
+## Converting Tiled (TMX) maps into a level/event stream
+
+Tile-based ports frequently start from a **Tiled `.tmx`** map. A clean build-time
+conversion (as a Raptor port does): parse the CSV **tile layer** into a compact
+tilemap array, and parse the **object layer** into a sorted **event stream** —
+each object becomes `(trigger_row, column, type, difficulty, gang)`, sorted by
+trigger then group, emitted as a `const LevelEvent[]` in ROM. The scrolling game
+then just walks the event list against the scroll position to spawn waves. Keep
+the map/events in ROM (`const`), not RAM.
+
+## Ship a verified-build report
+
+For a release, emit a `BUILD_REPORT.md` / `VERIFICATION.md` recording exactly
+what was verified, so "it works" is auditable: ROM **size + SHA-256**, the
+Mega Drive/32X **header checksum**, `.text`/`.bss` sizes and the **`.bss` end vs
+the SDRAM stack guard**, the toolchain revision, the static-verification
+checklist, and a **table of PicoDrive scenarios** with their video metrics
+(distinct colours, lit ratio, frames-changed) and, where relevant, **PCM audio
+metrics** (peak amplitude, non-zero sample ratio). Two shipped ports (Raptor,
+Tyrian) include exactly this; it's the difference between "verified" as a claim
+and as a record.
+
+## Start from a known-good boot foundation
+
+Rather than scaffold SH-2/68000 startup from scratch, copy a **known-good,
+permissively-licensed boot foundation** and adapt it — e.g. the MIT
+`haroldo-ok/hexgl-32x` crt0/startup/linker/ROM-fixup, or the Pong Kombat 32X
+scaffold. This is the constructive version of the "rebuild from a known-good
+tree" fix in `testing.md`: begin from bytes that already boot, then bring your
+game up on top, and record the foundation + revision in `SOURCE_PROVENANCE.md`.
+
+## Data-driven engines: reproduce the original's tables, interpret its scripts
+
+Many classic games are **data-driven** — their behaviour lives in tables and a
+level-script bytecode, not in code. The faithful (and compact) way to port them
+is to **convert the original's data tables verbatim into ROM `const` arrays** and
+write a small **interpreter** that consumes them, rather than hand-porting every
+behaviour. The Tyrian ep1-l1 port does this at scale:
+
+- **Tables in ROM, not logic in code.** The converter emits the original's
+  records unchanged — 851 enemy definitions, 781 weapon-pattern records, 43
+  weapon-port records — into a sectioned ROM asset bank. Weapon behaviour
+  (repeat rate, multi-shot pattern, damage, acceleration, animation, piercing/
+  freezing, homing) is *read from the record*, so adding a weapon is adding data,
+  not code. Immutable → stays in cartridge ROM; SDRAM holds only the live pools.
+- **A serialized level-event interpreter.** The level is a **sorted event stream**
+  keyed on scroll position (Tyrian: 1,009 events from location 0 to 8,100), each
+  event a small typed struct `{time, type, dat…}`. A `switch(type)` VM executes
+  them as the playfield scrolls past their trigger: spawn/formation/linked-group,
+  background-speed and slow-scroll regions, global velocity/acceleration changes,
+  per-enemy fire overrides, bank-selection validation, messages/flags/conditional
+  skips, boss setup, and an explicit **ending opcode** that drives the
+  level-complete transition. This is the Tiled-TMX→event-stream idea (above)
+  generalised to the original engine's full authored timeline.
+- **Interpret, don't reimplement, unknown opcodes safely.** Handle the event/
+  record types the level actually uses; for ordering/presentation opcodes the 32X
+  port doesn't reproduce (multi-layer draw order, starfield toggles, streamed
+  music fades), make the case an explicit no-op with a comment rather than
+  guessing — honest partial fidelity beats a wrong behaviour.
+- **Expose progress as telemetry.** Publish `level_pos` and `event_index` (see
+  `testing.md`) so a headless run can assert the whole stream executed
+  (`event_index == total`) — the interpreter's own counters double as the test
+  oracle.
+
+The payoff: content scales as *data* (more levels/enemies/weapons = more
+converted records) with fixed code and fixed RAM, and the port stays close to the
+original's actual behaviour because it runs the original's actual tables.

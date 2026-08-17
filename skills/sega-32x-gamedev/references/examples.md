@@ -129,3 +129,44 @@ licence). Grouped by what they best demonstrate.
 - **xgm-player-32x** — a **Genesis-side XGM/SGDK** player (68000+Z80 driving
   YM2612/PSG) with the UI on the SH-2, cooperating over COMM registers.
   https://github.com/haroldo-ok/xgm-player-32x
+
+## Verified full-source ports built *with* this skill
+
+Three complete, statically- and emulator-verified ports whose full source was
+studied here (all credit `haroldo-ok/sega-32x-skill-for-claude` as their workflow
+guide — this skill, in use). They are the highest-fidelity worked examples
+because the techniques below are read from shipping code, not a README summary.
+
+- **raptor32x** — a GPLv3 DOS **vertical shmup** port (*Raptor: Call of the
+  Shadows* clone). Fixed-tick state machine, fixed pools (20 enemies, 64+64
+  shots, 24 explosions, no heap), packed 8bpp, a **Tiled TMX → 299 sorted
+  mission-events** asset pipeline with a shared 256-colour palette (index 0
+  transparent), slave-SH-2 PWM effects, 68000 pad-poll + frame-heartbeat over
+  COMM, and a full `BUILD_REPORT.md` (SHA-256 + checksum + PicoDrive video/PCM
+  table). Started from the MIT hexgl-32x boot foundation. See
+  `porting-workflow.md` (TMX, build report, boot foundation) and `audio.md`.
+- **arkanoid32x** — a **first-person tunnel breakout** (*Break Free*-style, no
+  sound). The reference for **fixed-camera tunnel projection** (`software-3d.md`),
+  the **7 → 60 fps** optimization story (precomputed edge slopes → rasterise-once
+  → **dirty-rectangle compositing with per-framebuffer dirty lists + HUD
+  content-hash caching**), the **60/n vblank-quantization** model, the
+  **`make fillcount`** host profiler (all in `optimization.md`), a ~22,000-assertion
+  host test with a scripted perfect-player and an anti-tunnelling swept-collision
+  check, an **SDRAM liveness beacon** read by the harness, and a corner-screenshot
+  geometry gate (all in `testing.md`).
+- **tyrian-32x (Episode 1, Level 1)** — a GPL **OpenTyrian** port that grew from
+  an M1 vertical slice into a **complete scripted level**: all **1,009 serialized
+  level events** (typed opcodes: spawns, formations, linked groups, velocity/
+  acceleration changes, fire overrides, flags, conditional skips, boss, end)
+  walked against scroll position by an **event interpreter**, driven by the
+  original's **data tables in ROM** (851 enemy, 781 weapon, 43 weapon-port
+  records) for repeat-rate/multishot/damage/pierce/homing behaviour — plus a
+  loadout/shop, collectibles/economy, and a 19-section ~559 KB ROM asset bank.
+  The reference for: the **GPL-engine-but-proprietary-data** IP trap (Epic-EULA
+  data; ship the converter, not the ROM — `porting-workflow.md`), the
+  **data-driven engine + level-event VM** pattern (`porting-workflow.md`), the
+  **`.sdata @progbits` vector-copy black-screen invariant** with a raw-ROM
+  reset-vector verifier (`toolchain-and-build.md`), and — for testing long
+  content — an **in-ROM verification accelerator** and **COMM-register telemetry**
+  asserting exact end-state (`testing.md`). Seven PicoDrive scenarios run through
+  boss and `LEVEL COMPLETE`.

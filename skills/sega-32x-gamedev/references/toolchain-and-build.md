@@ -206,3 +206,29 @@ neutrally-named dirs like `rom/` and `obj/` instead. Relatedly, the toolchain
 under `/opt/toolchains/sega` often lives **outside** the snapshotted workspace
 and won't survive either; keep a `setup.sh` that reinstalls the toolchain (and
 PicoDrive) so `make` can be made whole again with one command.
+
+## The `.sdata`/vector-copy `@progbits` black-screen invariant
+
+The 32X boot ROM copies a **module-data payload** (the SH-2 vector tables live in
+it) from the cartridge into SDRAM before the SH-2s run. If the section holding
+those vectors is emitted **non-loadable**, you get an ELF that links and looks
+valid, but whose *raw ROM* has **padding where the vectors should be** — the
+boot ROM copies zeros, the SH-2 jumps through a null vector, and the screen is
+black. This bit a shipped Tyrian port.
+
+The fix is one flag in `crt0.s` — mark the section explicitly loadable
+`@progbits`:
+
+```asm
+    /* without @progbits this toolchain can emit .sdata as a non-loadable
+     * section and the module-header copy source is absent from the ROM */
+    .section .sdata,"aw",@progbits
+```
+
+And add a static check to `verify_rom.py`: don't just trust the ELF — compute the
+vector offset inside the module-data copy and assert the **reset vectors are
+actually present in the raw ROM payload** at that offset. This catches the
+otherwise-invisible case where the ELF is fine but the on-cartridge bytes are
+padding. (This is rung-2-adjacent on the black-screen ladder in `testing.md`:
+"palette loaded but still black" and "vectors present in ELF but not in ROM" are
+both builds that pass casual inspection and fail on hardware.)
