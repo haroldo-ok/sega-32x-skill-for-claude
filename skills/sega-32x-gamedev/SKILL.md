@@ -45,6 +45,15 @@ Pick a **rendering family** for the game:
 - **2D sprites** (packed 8bpp framebuffer + scanline shape fills; menus, shmups,
   arcade ports) → `references/2d-and-shmup.md` and `assets/2d/gfx_shapes.c`.
   Game shipped: a faithful vertical shooter with a full menu flow.
+- **First-person raycaster** (grid dungeon crawler: quarter-res cast + 2×2
+  expand, per-column DDA, depth-sorted billboards, shade-bank palette fog) →
+  `references/software-3d.md`. Game shipped: a dungeon crawler at 30 fps.
+- **Strategy / grid** (top-down RTS or tactics: A* pathfinding, three-state fog
+  of war, deterministic grid logic with interpolated rendering, worker economy)
+  → `references/strategy-and-grid.md`. Game shipped: a Warcraft-style RTS with
+  battery-backed SRAM saves.
+- **Pseudo-3D from sprites** (pre-baked view angles or sprite-stacking; racers,
+  driving games) → `references/software-3d.md`.
 
 
 For **worked examples** of complete 32X ports (a DOS software-3D racer, HTML5
@@ -265,6 +274,9 @@ When asked to "optimize the code":
 - `references/pico8-porting.md` — porting PICO-8 carts: the `pico8_api` compat
   layer (palette→CRAM, sspr/pal/print, btn/atan2 conventions), data extraction,
   resolution doubling, and the PICO-8/Mode-7 scanline hot-path idioms.
+- `references/strategy-and-grid.md` — RTS/tactics/grid-crawler games: host-tested
+  A* pathfinding, three-state fog of war, deterministic grid logic with
+  interpolated rendering, RTS AI/economy/construction, and turn-based grid rules.
 - `references/audio.md` — PWM FIFO, software voice mixer, PCM-capture verification.
 - `references/optimization.md` — SH-2 optimization patterns from d32xr, **plus
   how to measure effective framerate through the video harness** and the

@@ -120,3 +120,21 @@ full SH-2 control of the sound; choose **XGM/SGDK** when you want authentic
 YM2612/PSG Genesis music with minimal SH-2 audio code. Streamed **PCM through
 PWM** (a rail shooter embedded a dozen PCM clips and mixed them through the PWM
 FIFO) is the third option for voice/SFX-heavy games.
+
+## Compressed samples: IMA ADPCM decoded on the slave SH-2
+
+Full sample banks (music beds, engine loops, impacts) don't fit as raw PCM. Store
+them as **IMA ADPCM** (~4:1) and decode on the fly while mixing. A shipped racer
+(`wave-rider-gp`) converts **26 sounds to 11,025 Hz mono IMA ADPCM** and mixes
+them to the PWM FIFOs on the **slave SH-2**.
+
+- Convert offline to 4-bit IMA ADPCM at the mixer rate; store nibble streams +
+  each clip's start predictor/step index in ROM.
+- The slave decodes per-voice (predictor + step-index state machine, 4 bits →
+  one 16-bit sample), sums active voices, clamps, and pushes L/R to the FIFO.
+- **Batch the gain math** (compute per-voice gain once per block, not per sample)
+  and keep the decode/mix routine **cache-line-aligned in SDRAM** (see
+  `optimization.md`).
+- **Dedicate the slave to audio** so master render spikes can't starve the FIFO;
+  route the master→slave command block **cache-through** (see the cross-core note
+  in `architecture.md`) or the slave mixes stale commands on hardware.

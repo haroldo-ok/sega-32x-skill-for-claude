@@ -107,3 +107,18 @@ initialise every new field you add. Test restarts, not just first-run.
   the player and shrink to ~1px toward the horizon, so a still frame shows one
   bright near shot, not a long tracer. Scan the whole path, and don't expect a
   "stream".
+
+## Split-screen two-player
+
+Two-player split-screen (a shipped racer in the `dmar` collection) is just the
+render pass run twice with an independent camera and HUD per player into two
+viewport halves of the one 320×224 framebuffer:
+
+- Give each player its own camera/state; render viewport A (top/left half) then
+  viewport B, each **clipped to its half** (clip spans/blits to the sub-rect —
+  don't let one half's draws bleed into the other).
+- Halve the vertical (or horizontal) resolution per view; the dirty-rect and
+  cached-background tricks in `optimization.md` apply per half.
+- One HUD per player, positioned in its own viewport. Watch the fill budget: two
+  passes doubles pixel writes, so the 60/n vblank math (`optimization.md`) is
+  tighter — profile with `fillcount`.

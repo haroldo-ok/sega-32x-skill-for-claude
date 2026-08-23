@@ -175,3 +175,52 @@ one.** If the playfield is clamped to the near-plane bounds (a paddle riding the
 arena wall) but the projection makes that plane wider than the 320×224 screen,
 the player's own object slides off-screen in the corners. Gate it with a corner
 screenshot test (`testing.md`), not by eyeballing the centre.
+
+## First-person raycaster (grid dungeon crawler)
+
+For a wall-grid first-person game, a raycaster beats a general polygon pipeline.
+Reference: a shipped dungeon crawler (`noudar-32x`) sustaining 30 fps on one SH-2.
+
+- **Render low, expand cheap.** Cast into a small internal buffer (e.g. 128×80,
+  8bpp, in SDRAM) and expand **2×2 to the viewport (256×160) with 32-bit writes**
+  (4 pixels per store). Casting at quarter-resolution is the single biggest win;
+  the blit is aligned-word cheap.
+- **One DDA per screen column** using the **SH-2 hardware divider** (a divide is
+  ~39 cycles — fine once per column, never per pixel). Track a per-column depth
+  (z-buffer) as you go.
+- **Textured floors and ceilings per cell**, plus animated flats (lava) and a
+  scrolling sky where a cell has no ceiling.
+- **Billboards in two passes**: masked scenery (bars, arches, seals) collected
+  *during* the ray walk; monsters/items/effects as **depth-sorted billboards
+  clipped against the column z-buffer** so walls occlude them correctly.
+
+## Shade-bank / shade-LUT palette fog (zero per-pixel lighting)
+
+Distance fog and hit-flashes for free, via the palette instead of per-pixel math
+— used by the crawler above and a first-person brick-breaker (`breakfree-32x`):
+
+- **Shade banks.** Lay out one base 64-colour palette replicated as **N CRAM
+  shade banks** (darker copies). A pixel value is `(shade << 6) | colour`; pick
+  `shade` from the column/among the billboard's depth and write the pixel — **fog
+  costs zero extra per-pixel work**, it's just which bank the index lands in.
+- **Shade LUT.** With a 16-colour ramp per hue, precompute
+  `shade_lut[depth][index] = (index & 0xF0) | min(0x0F, (index & 0x0F) + depth)`
+  and index through it while blitting — same idea when colours are organised as
+  per-hue brightness ramps.
+- **Palette-swap flashes.** Full-CRAM swaps (to a reddened/whitened palette) do
+  damage/heal flashes across the whole screen in one write, no redraw.
+
+## Pseudo-3D from pre-baked sprite angles / sprite-stacking
+
+You can fake 3D models without a rasterizer by **pre-baking sprites**:
+
+- **Baked view angles.** Render each model to a fixed set of viewing angles
+  offline and pick the nearest at runtime — a water-racer baked 46 OBJ models
+  into **8 × 48×48** angle sprites (`wave-rider-gp`); a zombie-driver baked cars
+  at **64 angles** (`dmar` / Death Dash Crash). Scale the chosen sprite by depth
+  with an offline row/scale table (see `optimization.md`).
+- **Sprite-stacking.** Stack a stack of 2D slices with a small per-slice vertical
+  offset and rotation to fake a voxel-ish object from top-down art (racers in the
+  `dmar` collection). Cheap, distinctive, no 3D math.
+
+Both keep the "3D" cost at blit-a-scaled-sprite, leaving the SH-2 for gameplay.

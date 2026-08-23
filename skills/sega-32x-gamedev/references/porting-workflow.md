@@ -321,3 +321,47 @@ behaviour. The Tyrian ep1-l1 port does this at scale:
 The payoff: content scales as *data* (more levels/enemies/weapons = more
 converted records) with fixed code and fixed RAM, and the port stays close to the
 original's actual behaviour because it runs the original's actual tables.
+
+## Reverse-engineering a game's proprietary data format
+
+Many DOS/retro games keep art/levels/audio in a custom archive. Porting
+faithfully means **decoding that format at build time**, not redrawing assets. A
+build-time converter (Python) that implements the original's container is the
+right home for this — examples: an RTS decoding Warcraft's `DATA.WAR` (offset
+table + a **4 KiB-window LZSS** decompressor, image/sprite/tileset readers, a
+map/mission parser), a brick-breaker decoding `BRKFREE.MLB` into two SH-2 asset
+banks, and a crawler parsing **40×40 ASCII level files** with the original
+tile-property sheets. Steps that generalise:
+
+1. Find the container's **offset/table of contents** and any per-entry
+   compression (RLE/LZSS/LZW). Implement the exact decompressor.
+2. Decode each resource type (palette, images, tiles, maps, sprites, audio) into
+   plain arrays; **quantize into one 8-bit 32X palette** with index 0 reserved
+   for transparency.
+3. Emit `const` C tables / `.incbin` banks (see the data-driven-engine section);
+   keep everything immutable in ROM.
+
+Record the exact upstream revision and the container's role in
+`SOURCE_PROVENANCE.md`.
+
+## More licensing cases (know which one you're in)
+
+Extending the IP model above with the cases these ports hit:
+
+- **User-supplied game data, no original executable code** — an RTS ships the
+  *converter and MIT-licensed reimplementation* but requires the user to provide
+  their own Warcraft demo `DATA.WAR`; the ROM/asset bank built from it are not
+  redistributed. Ship the pipeline, the user supplies the data (as with Tyrian).
+- **BSD-2 code *and* assets** (a crawler): the cleanest case — keep the licence on
+  the reimplemented rules and the converted assets, credit the author.
+- **CC0 assets** (a Kenney art kit used by an HTML5 game): public domain, free to
+  use/redistribute; still attribute as a courtesy and record provenance.
+- **CC BY-NC-SA** (PICO-8 ports): attribute, **non-commercial**, and **ShareAlike**
+  (the port carries the same licence). No paid downloads or repro carts.
+- **Freeware-declared original** (a 1992 shooter released as freeware): even so,
+  do a **from-scratch C rewrite of the gameplay** and use **procedural/original
+  sprites** rather than pasting the original sources or shipping its VGA assets —
+  cleaner rights and a better 32X fit. Keep attribution per the freeware grant.
+
+Across all of them the rule is unchanged: **redistribute only what each input's
+licence permits**; when unsure, ship the converter and the code, not the data.
