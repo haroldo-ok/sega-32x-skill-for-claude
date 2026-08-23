@@ -280,3 +280,25 @@ per frame, broken down by element** (backdrop, entities, HUD). This tells a
 (too many small spans/clips) — the distinction that decides whether to cache
 pixels or batch primitives. Measure first; the breakout's bottleneck was setup
 and re-draw, not fill volume.
+
+## An SH-2 optimization audit checklist (from a shipped racer)
+
+A water-racer (`wave-rider-gp`) audited its renderer+mixer against DOOM 32X
+Resurrection and applied a repeatable checklist worth running on any perf-bound
+32X game:
+
+- **Cache-line-align hot routines and place them in SDRAM** (not slow ROM) so the
+  inner draw/audio loops run cached.
+- **Packed, unrolled framebuffer writes** (32-bit stores, 4 px each; unroll the
+  span loop).
+- **Offline tables for per-frame math**: sprite row/scale tables, sin/atan2 LUTs,
+  reciprocal tables — compute once, index at runtime.
+- **Interpolated reciprocal-depth projection** (one reciprocal per depth step,
+  interpolate between — the divide-hoist generalised).
+- **Precompute static spatial data** (course edges, minimap, wave field) at load.
+- **Far-to-near sort** (a shell sort over few objects) for painter's order.
+- **Batch audio gain** once per block, not per sample.
+- **`-flto` across modules + `--gc-sections`**; render low-res and 2×-expand with
+  aligned writes when fillrate-bound (see the raycaster in `software-3d.md`).
+- Keep the **slave SH-2 on audio only** if unsynchronised render work there risks
+  FIFO underruns — a real trade-off, not a free core.

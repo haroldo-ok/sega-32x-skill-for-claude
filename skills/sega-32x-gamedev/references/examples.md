@@ -170,3 +170,40 @@ because the techniques below are read from shipping code, not a README summary.
   content — an **in-ROM verification accelerator** and **COMM-register telemetry**
   asserting exact end-state (`testing.md`). Seven PicoDrive scenarios run through
   boss and `LEVEL COMPLETE`.
+
+## More studied ports — new genres & capabilities
+
+- **warcraft-32x** (WinWar) — a native **real-time strategy** port (MIT WinWar
+  reimplementation; user-supplied Warcraft `DATA.WAR`). The reference for
+  `strategy-and-grid.md` (host-tested **A\*** with octile heuristic + no
+  corner-cutting + footprints + replanning, **three-state fog of war**,
+  deterministic-grid-with-12-frame-interpolation, RTS aggro/economy/construction)
+  and for **battery-backed SRAM saves** with a pixel-compare restore test
+  (`architecture.md`). `DATA.WAR` LZSS decode + IP model in `porting-workflow.md`.
+  https://github.com/haroldo-ok/warcraft-32x
+- **noudar-32x** (Dungeons of Noudar 3D, BSD-2) — a first-person **raycaster
+  dungeon crawler**: quarter-res cast + 2×2 aligned expand, per-column DDA with
+  the hardware divider, textured flats, depth-sorted billboards, and **shade-bank
+  palette fog** (`software-3d.md`); turn-based grid rules with a desktop-render
+  oracle + SDRAM/COMM beacon (`strategy-and-grid.md`, `testing.md`).
+  https://github.com/haroldo-ok/noudar-32x
+- **wave-rider-gp-32x** (HTML5 jet-ski racer) — **pseudo-3D from pre-baked sprite
+  angles** (46 OBJ models → 8×48×48 sprites), **IMA ADPCM** sample banks mixed on
+  the slave SH-2 (`audio.md`), 30 Hz fixed physics decoupled from a variable
+  renderer, a full d32xr **optimization audit** (`optimization.md`), CC0 art +
+  provenance fingerprints. 25-scenario PicoDrive suite incl. steering-polarity
+  telemetry. https://github.com/haroldo-ok/wave-rider-gp-32x
+- **dmar-daytripper-conversions-to-32x** — a **collection** of native PICO-8 ports
+  (Pico Racer 2048, Death Dash Crash, Mr. Boom, HIT8OX): **split-screen 2P**
+  (`2d-and-shmup.md`), **sprite-stacking / 64-angle** cars (`software-3d.md`),
+  SRAM records/custom-tracks, Cohen–Sutherland clipping, CC-BY-NC-SA
+  (`porting-workflow.md`, `pico8-porting.md`).
+  https://github.com/haroldo-ok/dmar-daytripper-conversions-to-32x
+- **breakfree-32x** (Break Free, DOS) — the first-person brick-breaker whose data
+  (`BRKFREE.MLB`) is decoded at build time into two asset banks; source of the
+  **shade-LUT fog** formula (`software-3d.md`). The clean-room `arkanoid32x` above
+  is modelled on this. https://github.com/haroldo-ok/breakfree-32x
+- **kiloblaster-32x** (Kiloblaster, freeware 1992) — a Galaxian-style shooter as a
+  **from-scratch C rewrite with procedural sprites** (not a source paste, no DOS
+  VGA assets) on the MIT hexgl boot foundation — the "freeware original" IP case
+  in `porting-workflow.md`. https://github.com/haroldo-ok/kiloblaster-32x

@@ -168,3 +168,48 @@ a `dx*dx + dz*dz` with world coords in 16.16 will silently wrap if typed
 this class of bug **passes on the host and only shows on hardware** — grep for
 `long ` in any distance/nearest/area code when porting host-tested logic to the
 SH-2.
+
+## Battery-backed cartridge SRAM saves
+
+Persisting progress (an RTS campaign, track records, custom levels) uses the
+cartridge's **battery-backed SRAM**, which the 68000 sees in its ROM/save window;
+the SH-2 reaches it through the same 68000-side access path. Shipped examples: an
+RTS with a full save/continue flow (`warcraft-32x`) and racers saving records +
+custom tracks (`dmar-daytripper-conversions`).
+
+A robust format is small and defensive:
+
+- **Bounded, fixed layout** (e.g. ≤2 KiB): a magic/version header, a compact
+  encoding of the mutable state (entities, resources, construction/training
+  queues, campaign position), and a **checksum** over the payload.
+- **Encode/decode explicitly** — don't `memcpy` live structs; serialize only the
+  mutable fields so the format survives code changes, and keep it endian-defined.
+- **Sparse storage for big-but-mostly-default state** (e.g. only the forest cells
+  that were depleted), so a 64×64 world's diffs fit in a couple of KiB.
+- **Validate on boot**: check magic/version/checksum, detect corruption, and only
+  then light up a **Continue** menu item. A bad save must fail safe to "no save",
+  never crash.
+- **Save/Load UI** on the pause menu; write on request, not every frame (SRAM
+  writes are slow and finite).
+
+**Test saves through the real SRAM path, not a stub.** A strong point-to-point
+test writes live game state through the actual 68000 SRAM protocol, quits to the
+freshly-enabled **Continue**, reloads, and compares the restored scene
+**pixel-for-pixel** against the pre-save frame. That proves the encoder, the
+decoder, and the hardware access path all agree.
+
+## Dual-SH-2 role splits and cross-core data
+
+Beyond "slave clears the framebuffer", shipped games assign the second SH-2 a
+standing job:
+
+- **Slave = uninterrupted PWM audio.** Dedicate the slave to feeding the PWM
+  FIFOs so heavy master-side rendering can never starve the mixer into buzzing
+  (`wave-rider-gp`, the tracker player). Keep unsynchronised render work *off* it.
+- **Slave = command/cache service.** An RTS runs the master for gameplay+render
+  and uses the slave for a command/cache service (`warcraft-32x`).
+- **Cross-core cache coherency is on you.** SDRAM is cached per-SH-2; data one
+  core writes for the other must be flushed/read **cache-through** or the reader
+  sees stale bytes — a bug that only bites on *hardware*, not in some emulators.
+  Route cross-core buffers (audio command blocks, job descriptors) through
+  uncached access or explicit cache handling, and test on hardware where possible.
