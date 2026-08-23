@@ -302,3 +302,63 @@ Resurrection and applied a repeatable checklist worth running on any perf-bound
   aligned writes when fillrate-bound (see the raycaster in `software-3d.md`).
 - Keep the **slave SH-2 on audio only** if unsynchronised render work there risks
   FIFO underruns — a real trade-off, not a free core.
+
+## Measure sub-vblank slack with a headroom probe (fps is too coarse)
+
+Because frame time is quantised to 60/n, **fps cannot show a sub-boundary win** —
+a change can make the renderer 20% faster and the number won't move (a shipped
+racer initially, and wrongly, reported "zero gain" for exactly this reason). Add
+a **headroom probe** (`make headroom`) that injects **calibrated busy-work
+(ballast)** into the frame and reports how much the frame can absorb before it
+drops a vblank step. That's a *continuous* metric; use it, not fps, to compare
+changes that don't cross a boundary.
+
+**Verify the instrument before trusting a single number** — two real bugs made
+every reading invalid on that racer:
+
+- An `EXTRA_CFLAGS`/ballast hook that **never reached the compiler**, so 4,000,000
+  dummy iterations per frame "cost nothing." Sanity-check that your ballast
+  actually costs something monotonic before believing any result.
+- The **PicoDrive harness left the SH-2 dynarec and its idle-loop detection on**
+  (it answered `false` to every core option), which optimises away busy-work and
+  hides stalls. Disable the dynarec / idle detection in the test core when
+  profiling. Distrust timing taken before the instrument is validated.
+
+## Kill hidden 64-bit divides
+
+`(dx << 16) / dy` on the SH-2 compiles to **libgcc `__divdi3`** (a slow 64-bit
+software divide) — a road rasteriser was doing ~340 of them per frame. Replace
+per-scanline/per-point divides with a **reciprocal table** (`fx_div_small`, a
+1–4 K-entry table), and **fold constant factors into the table** (e.g. bake
+`focal` into the projection reciprocal so a 3-factor 64-bit product becomes one
+32×32 multiply; rebuild the table only when the factor changes). Grep your
+disassembly for `__divdi3`/`__udivdi3`; each one in a hot loop is a table waiting
+to happen.
+
+## More rasterization wins (from a shipped 12→30 fps racer)
+
+Compact checklist, each measured:
+
+- **Bake transcendentals at build time.** AI corner-speed used 2 `atan2` + 2
+  `hypot` × 14 lookahead points × N cars/frame (~750/frame) — precompute into a
+  ROM table. Same for centreline tangents/normals.
+- **Scanline shared-edge strips** instead of quads-as-triangles: a road strip's
+  longitudinal edges are shared, so walking it by scanline needs ~6 divides where
+  10 triangles paid ~30 edge-slope divides + point-sorts per segment.
+- **Only fill what isn't covered.** Have the road rasteriser record its
+  per-scanline extent and fill grass beside it — overdraw 1.36× → 1.05×,
+  ~21 K writes/frame saved.
+- **Cull before sorting** (halves *n* in an O(n²) insertion sort);
+  **frustum-cull + LOD** distant meshes (a far car → 13 tris, then a single box);
+  **drop buried faces at build** (coincident quads sealed inside abutting boxes).
+- **Hoist the camera basis**: compute sin/cos of camera yaw/pitch **once per
+  frame**, not per vertex (~600 lookups/frame).
+- **Inline the hot span fill.** At ~1600 spans/frame a span function's call +
+  re-clip overhead was **62%** of all span time — inline it, and use a
+  `col → 4×col` word table so 32-bit stores need no per-span shift/or.
+- **4-pixel-aligned tiles/camera**: keep a tile row on a 4px boundary so a 16px
+  row is exactly four aligned 32-bit stores (a whole map layer ≈ 19 K longs).
+- **HALF_HEIGHT line-doubling**: render 112 rows and point two display lines at
+  each via the frame-buffer line table (the VDP doubles for free) — ~40% frame
+  slack for lost vertical detail; only worth enabling if it crosses a vblank
+  boundary.

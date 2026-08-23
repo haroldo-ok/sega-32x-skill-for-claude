@@ -213,3 +213,18 @@ standing job:
   sees stale bytes — a bug that only bites on *hardware*, not in some emulators.
   Route cross-core buffers (audio command blocks, job descriptors) through
   uncached access or explicit cache handling, and test on hardware where possible.
+
+## Assign COMM slots deliberately (collisions are vicious)
+
+The COMM mailbox is shared by the boot handshake (`M_OK`/`S_OK`), the security
+checksum (COMM8), the 68000 pad path, test telemetry, and any slave-job protocol.
+**Two subsystems on the same word cause non-obvious corruption** — a slave-job
+command sharing COMM4 with the `S_OK` handshake let the slave run before FM was
+granted and scribble the VDP registers (a doubled-image black-screen). Keep a
+documented slot map (e.g. COMM0/2 = pad, COMM4 = boot handshake, COMM6+ =
+telemetry, a *different* slot for job commands), and guard it with a static
+grep-check plus a symptom assertion in the emulator suite (see `testing.md`).
+When you dedicate the slave to a job over the framebuffer, having the two cores
+touch **disjoint rows** of the uncached framebuffer avoids cache coherency work
+entirely — and keep the master's wait on the slave **bounded**, so a silent slave
+degrades to a slower frame, never a hang.

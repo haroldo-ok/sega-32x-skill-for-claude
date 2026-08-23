@@ -402,3 +402,73 @@ weapon-power triple proves collectibles *mutated state*, not merely drew. Reserv
 a couple of COMM slots as pad-owned (the 68000 writes input there) and use the
 rest for telemetry. This is the mailbox counterpart to the SDRAM beacon above —
 pick whichever your input path leaves free.
+
+## Catalog: ROMs that verify clean but boot black (or wrong-coloured)
+
+The black-screen ladder finds *which* class you're in; this is the catalog of
+concrete 32X causes seen across shipped ports (a single racer hit nine of them).
+Most compile, link, and pass static verification. Keep it as a checklist:
+
+- **`.sdata`/startup section not loadable.** GAS defaults `.sdata` to READONLY, so
+  the linker keeps LMA==VMA and `objcopy -O binary` drops it — the ROM ships with
+  **no startup code / no vector tables** and the BIOS copies padding into SDRAM.
+  Fix: `.section .sdata,"aw",@progbits` (see `toolchain-and-build.md`); verify the
+  reset vectors are present in the **raw ROM**, not just the ELF.
+- **CRAM bit 15 clear = transparent.** A perfectly rendered frame is invisible if
+  palette entries don't set `0x8000`.
+- **CRAM byte order.** Entries are `0x8000 | (B<<10) | (G<<5) | R`; swapping R/B
+  renders a blue sky as dark red — "wrong colours", not black, but the same class
+  of "looks broken, verifies fine."
+- **VDP register at the wrong address** (e.g. `FBCTL`/`DISPMODE` off by a couple
+  of bytes) — the page flip or mode set silently never happens.
+- **VDP left in direct-colour instead of 256-colour packed-pixel** → each row
+  eats 640 bytes not 320, so you get **two half-width copies** with indices
+  reinterpreted as RGB555. Spell out every DISPMODE field and **re-assert the mode
+  on each flip**.
+- **Uninitialised frame-buffer line table** (on *either* buffer) — the classic
+  blank screen; both buffers need a valid line table at init.
+- **FM granted after the SH-2 handshake.** `hw_init()` waits for FM before
+  touching the VDP, but if the 68000 sets FM only *after* waiting for the SH-2's
+  `M_OK`, both sides wait forever. **Grant FM before the handshake.**
+- **Security-block checksum handshake unmet.** The Sega boot block spins until the
+  SH-2 publishes the ROM checksum in **COMM8**; a minimal 68000 side must satisfy
+  that or all three CPUs deadlock.
+- **VBlank enabled with no handler**, plus an **unbounded flip-wait spin** — hangs
+  before first present.
+- **Stock MD header ROM-end word** (`0x1A4`) hardcodes 4 MiB and fails static
+  verification / confuses loaders; `romfix.py` must rewrite it to the real size.
+
+## COMM-register allocation is a real hazard
+
+The COMM mailbox is shared by the boot handshake, the 68000 pad path, telemetry,
+*and* any slave-job protocol — and a **collision produces bizarre, non-obvious
+bugs**. One racer drove the slave-job command through **COMM4**, the same word
+the slave's `S_OK` boot handshake uses, so a job value was read as a handshake
+and the slave ran before FM was granted and scribbled the VDP registers (the
+doubled-image bug above). Assign COMM slots deliberately, document the map, and
+guard it: a **static `check_comm.py`** that greps for overlapping slot use, and a
+**left/right-symmetry assertion** in the emulator suite that detects the doubled
+image directly.
+
+## Oracle against the original's *own* code
+
+Stronger than a hand-written expected-value test: run the **original game's
+actual code** as the oracle and diff. A racer's `make oracle` runs the shipped
+JavaScript physics (`stepPlayer`/`stepAI`, copied verbatim) and the C core from
+the same grid slot with the same inputs, then diffs trajectories — max `dpos`
+0.004u over 220 frames on a 187u circuit. Note the honest caveat: **chaotic
+stretches** (guardrail contact, where a sub-LSB difference amplifies
+exponentially) are compared on **aggregate behaviour** (distance/speed within a
+few %), not frame-exact position. Use frame-exact where the system is stable,
+aggregate where it's chaotic.
+
+## A test that re-derives the maths cannot catch the maths being wrong
+
+Two handedness bugs (a car body rotating backwards; reversed steering) survived
+because the test recomputed the same rotation the renderer used. **Put shared
+math in one function both the code and its test call** (`r_model_to_world()`), so
+the test pins the *actual* behaviour, not a copy of the suspect formula. And size
+your LUT precision to the *consumer*: whole-brad `atan2` (1.4°) is fine for
+gameplay headings but **one brad of camera pitch moves the horizon 4–5
+scanlines**, so the camera needs an interpolated 16.16 `atan2` (257-entry) —
+worst-case error 0.99 → 0.0002 brads, zero horizon jumps over 3000 frames.
