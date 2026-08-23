@@ -365,3 +365,41 @@ Extending the IP model above with the cases these ports hit:
 
 Across all of them the rule is unchanged: **redistribute only what each input's
 licence permits**; when unsure, ship the converter and the code, not the data.
+
+## Don't port the interpreter — compile its content to bytecode + a tiny VM
+
+When the "game" is really **content run by a big interpreter** (an RPG Maker
+project under EasyRPG, a VN engine, a scripting-heavy game), do **not** port the
+interpreter — a ~30 MB C++ player with SDL/audio/filesystem won't fit in 256 KiB
+and won't parse chunk streams at 23 MHz. Instead, **move all interpretation to
+build time and ship a compact bytecode plus a small runtime VM** — the exact
+core/shell split, applied to the *script*:
+
+1. **Read the original data format** in a build-time tool (a shipped Sonic RPG
+   port wrote a from-scratch reader for RPG Maker 2000 **LCF** — `RPG_RT.ldb/.lmt`,
+   `Map0001.lmu` — BER-encoded chunk streams, map layers, event pages, page
+   conditions, command lists).
+2. **Compile the event/command lists into a compact bytecode**: messages, face
+   changes, choices with branch targets, switches/variables, conditional
+   branches, item pickups, SFX cues, waits. Emit it as a `const` blob in ROM.
+3. **Write a tiny interpreter** for *just the opcodes this game uses* — the Sonic
+   RPG runtime is ~250 lines of C, the slice of the RPG Maker event engine the
+   game actually exercises (page conditions like `switch on`/`item held`,
+   action-key vs player-touch triggers, parallel-process pages).
+
+The whole game — maps, NPCs, branching dialogue trees, conditional branches,
+pickups — ends up as data + a small VM, which is testable (host-run the VM) and
+tiny. This is the data-driven-engine pattern (above) taken to its conclusion:
+interpret at build time, ship the residue.
+
+### Tile/RPG asset-pipeline specifics
+
+- **Autotile composition**: reproduce the engine's autotile rules (EasyRPG blocks
+  A/B/C/E/F) in the converter so terrain matches the original; pull the chipset
+  **passability** table from the database for collision.
+- **One global 256-colour palette** built by **median-cut per asset group** then
+  **exact nearest-colour mapping**, every image baked to 8bpp indices (index 0
+  transparent). Cut character sprites (e.g. 24×32, 4 dirs × 3 frames), face
+  portraits, the panorama, the title.
+- **Keep the header honest**: a stock MD header's ROM-end word (`0x1A4`) hardcodes
+  4 MiB and fails static verification — rewrite it to the true size in `romfix`.

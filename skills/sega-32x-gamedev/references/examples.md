@@ -207,3 +207,27 @@ because the techniques below are read from shipping code, not a README summary.
   **from-scratch C rewrite with procedural sprites** (not a source paste, no DOS
   VGA assets) on the MIT hexgl boot foundation — the "freeware original" IP case
   in `porting-workflow.md`. https://github.com/haroldo-ok/kiloblaster-32x
+
+## More studied ports — a verified racer and a scripted RPG
+
+- **racing-circuit-32x** (haruka_apps, HTML5/Three.js) — a **circuit racer**
+  converted number-for-number: track geometry from the original's `buildTrack()`
+  run verbatim, real Kenney `.glb` car meshes decimated for the SH-2, and a
+  line-by-line translation of the JS drift/AI physics. The reference for the
+  **original-code oracle diff** (`make oracle` diffs C vs the shipped JS physics),
+  the **`make headroom` continuous perf metric** and the **instrument-validation**
+  lesson, a **12→30 fps** optimization log (bake transcendentals, scanline
+  shared-edge strips, kill `__divdi3`, cull-before-sort, inline spans, sky on the
+  slave over disjoint rows), and a **nine-item black-screen catalog** incl. the
+  **COMM4 collision → direct-colour doubled image** (all in `optimization.md`,
+  `testing.md`, `architecture.md`). https://github.com/haroldo-ok/racing-circuit-32x
+- **super-sonic-rpg-32x** (jessbiebel, RPG Maker 2000 fangame) — the reference for
+  **"don't port the interpreter"** (`porting-workflow.md`): a build-time **LCF**
+  reader + **event-page → bytecode** compiler with a ~250-line runtime VM, EasyRPG
+  **autotile** composition, chipset passability collision, a median-cut global
+  palette, RPG tile-movement with page conditions / touch triggers /
+  parallel-process pages, 30 Hz fixed tick, slave-SH-2 PWM over disjoint SDRAM,
+  and an SDRAM beacon suite. Fan work, non-commercial, no assets redistributed
+  outside the ROM. https://github.com/haroldo-ok/super-sonic-rpg-32x
+- **wave-rider-gp-32x** — already cataloged above (pseudo-3D from baked sprite
+  angles, IMA ADPCM on the slave, d32xr optimization audit).
