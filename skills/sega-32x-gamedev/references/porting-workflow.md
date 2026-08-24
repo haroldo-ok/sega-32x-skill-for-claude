@@ -403,3 +403,62 @@ interpret at build time, ship the residue.
   portraits, the panorama, the title.
 - **Keep the header honest**: a stock MD header's ROM-end word (`0x1A4`) hardcodes
   4 MiB and fails static verification — rewrite it to the true size in `romfix`.
+
+## Scope a large content port with an audit *before* writing runtime
+
+For a big data-driven game (a 176-map RPG), don't start coding the runtime — first
+**audit the whole project and measure the work**. A Franzen port ran
+`tools/audit_game.py` to parse **every** map and inventory every event command
+before implementation: 176/176 maps parsed, 2,159 events, 2,716 pages, **15,580
+command records, 45 distinct command IDs**, and crucially **what fraction the
+existing tiny VM already covers** (86.88%) versus the **hard remaining systems**
+that can't be skipped in a faithful port (teleport/transfer, encounters/battles,
+pictures, BGM, screen effects, shops, save/menu). That report (`content-audit.json`)
+turns "port this RPG" from open-ended into a bounded, prioritised backlog, and it
+tells you early whether the thing even fits (see the ROM-size decision in
+`architecture.md`). Do this audit pass first; it's cheap and it prevents building
+an asset format you have to throw away.
+
+**Honest definition of done for a full game** (from that port's `PORT_STATUS.md`):
+"a compiling or title-only ROM is not a completed port." A full RPG is done only
+when it plays title→ending with map/event fidelity, battles, party/inventory
+progression, usable audio, SRAM saves, and passing emulator tests. Track fidelity
+as an explicit checklist and don't call a vertical slice the finished port — the
+same "verified, not compiled" honesty at project scale.
+
+## Porting a full RPG: the subsystems beyond the map VM
+
+A complete RM2K-class JRPG (a shipped Raintown Slickers port does all of this)
+needs more than the message/choice VM from `super-sonic-rpg`:
+
+- **Fuller event interpreter**: on top of messages/choices/switches/variables/
+  teleports/fades, real games use **common-event calls**, **labels/jumps**,
+  **conditional branches**, **forced move routes** (flatten them at build time,
+  resolve sprite ids), erase-event, gold/items/party changes, full-heal, and
+  battle/return-to-title. Compile each page's command list to compact 4-byte
+  bytecode `{code, indent, params[], string}` + a sentinel.
+- **Autotile → a deduplicated tile atlas.** Evaluate RM2K autotile blocks (A/B/C/D
+  and the 47/50 subtile variant tables) at build time and **dedup** the result:
+  one game's 13,025 map cells collapsed to **243 unique 16×16 tiles**. Bake
+  per-cell passability + wall + above-hero flags into **one byte** so the runtime
+  never touches chipset tables.
+- **Turn-based front-view battle** as its own scene: turn order by agility;
+  Attack / Skill / Defend / Item / Escape; damage & skill formulas with
+  criticals; EXP/gold, level-ups off the RM2K EXP curve; backdrop + monster art.
+- **Field menu / party**: actor stats, equipment bonuses, usable items, skill
+  lists, currency; database (actors/items/skills/enemies/troops/terms) emitted as
+  `const` C tables.
+- **Preserve the original's timing regardless of render rate**: advance every
+  timer (waits, move routes, the message typewriter, battle pacing) by the number
+  of 60 Hz **vblanks each frame actually covered**, not once per rendered frame,
+  so a ~28 fps scroll still keeps RM2K's real-time pacing. (The elapsed-vblank
+  form of the fixed-tick rule.)
+
+## Large games: palettes, map banking, and inheritance
+
+Small ports get away with one shared 256-colour palette (a whole game in ~364
+colours). A big game will not — plan **per-scene / per-region palettes or
+palette-remapped asset groups**, decided up front. Likewise emit a **banked
+multi-map directory with lazy map activation** rather than one flat map blob, and
+**resolve RM2K map-tree inheritance** (music/background/permissions/encounters
+inherited down the tree) into each generated map at build time.
