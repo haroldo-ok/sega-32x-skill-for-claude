@@ -228,3 +228,34 @@ When you dedicate the slave to a job over the framebuffer, having the two cores
 touch **disjoint rows** of the uncached framebuffer avoids cache coherency work
 entirely — and keep the master's wait on the slave **bounded**, so a silent slave
 degrades to a slower frame, never a hang.
+
+## ROM size, banking, and the 32X-CD decision for large games
+
+The cartridge address window is finite — a stock low-ROM window is roughly
+**4 MiB**. Small ports fit easily (a 512 KiB–2 MiB ROM: engine + a ~1.2 MB asset
+bank). Large content does not: one RPG's **source soundtrack alone was ~170 MiB**.
+Consequences to settle **before you freeze the asset compiler's address format**:
+
+- **Pick the platform/layout up front.** Either a **cartridge banking scheme**
+  (a banked, lazily-activated map/asset directory rather than one flat blob) or a
+  **32X-CD build** (streaming from CD). Retrofitting banking after the converter
+  emits absolute offsets means rewriting the converter — decide first.
+- **Transform, don't embed, oversized audio.** Replace MP3/WAV streams with
+  legally-redistributable converted audio: short **IMA-ADPCM** cues plus either
+  sequenced YM2612/PSG music or aggressively reduced/banked ADPCM (see
+  `audio.md`).
+- **Grow the ROM to a valid power-of-two** as content lands (one port auto-expanded
+  512 KiB→1 MiB) while keeping the header, checksum, and SDRAM budget valid — and
+  keep `romfix.py` rewriting the ROM-end header word so static verification passes.
+
+Rule of thumb: budget the asset bank against ~4 MiB early; if the honest total
+blows past it, the answer is banking or 32X-CD, not "compress harder later."
+
+## Robust SRAM saves: versioned checksums + two-phase commit
+
+Extending the SRAM-save format above for a real game: tag the payload with a
+**format version** (so old saves are detected and rejected/migrated, not
+misread), checksum it, and write with a **two-phase commit** — write the new save
+to a spare slot, verify it, then flip an active-slot marker — so a power-loss
+mid-write can never corrupt the only good save. Validate on boot before offering
+Continue; a bad save fails safe to "no save."

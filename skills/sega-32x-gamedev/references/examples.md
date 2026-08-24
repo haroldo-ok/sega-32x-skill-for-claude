@@ -231,3 +231,26 @@ because the techniques below are read from shipping code, not a README summary.
   outside the ROM. https://github.com/haroldo-ok/super-sonic-rpg-32x
 - **wave-rider-gp-32x** — already cataloged above (pseudo-3D from baked sprite
   angles, IMA ADPCM on the slave, d32xr optimization audit).
+
+## Full-source RPG ports — the complete-JRPG and large-scope cases
+
+- **raintown-slickers-32x** (CrimsonBulb, RPG Maker 2000 JRPG) — a *complete* RM2K
+  port and the reference for **porting a full RPG's subsystems**
+  (`porting-workflow.md`): the full event interpreter (common-event calls,
+  labels/jumps, forced move routes flattened), **autotile → a deduplicated tile
+  atlas** (13,025 cells → 243 tiles) with a one-byte-per-cell passability, a
+  turn-based front-view **battle system** (agility order, Attack/Skill/Defend/
+  Item/Escape, criticals, EXP/level-ups), a field menu/party, and RM2K timing
+  preserved by advancing timers per **elapsed vblank**. Also the source of the
+  **heartbeat + interpreter-state debug overlay**, **debug warps**, and the
+  **MD-work-RAM telemetry** channel (`testing.md`). MIT code on the hexgl-32x boot
+  foundation; game data user-supplied. https://github.com/haroldo-ok/raintown-slickers-32x
+- **franzen-32x** (scumhead, RPG Maker 2000/2003) — a **large-scope WIP** port and
+  the reference for **auditing scope before building** (`porting-workflow.md`):
+  `audit_game.py` inventories all **176 maps / 15,580 command records / 45 command
+  IDs** and the **% already covered by the tiny VM** vs the hard remaining systems,
+  producing a bounded backlog. Also the reference for the **ROM-size / cartridge-
+  banking / 32X-CD decision** for oversized content (~170 MiB source audio vs a
+  ~4 MiB window) and **per-scene palettes / banked multi-map directories** for big
+  games (`architecture.md`), plus an honest "title-only ≠ done" `PORT_STATUS.md`.
+  Converter derived from the `super-sonic-rpg-32x` LCF workflow. https://github.com/haroldo-ok/franzen-32x

@@ -472,3 +472,41 @@ your LUT precision to the *consumer*: whole-brad `atan2` (1.4°) is fine for
 gameplay headings but **one brad of camera pitch moves the horizon 4–5
 scanlines**, so the camera needs an interpolated 16.16 `atan2` (257-entry) —
 worst-case error 0.99 → 0.0002 brads, zero horizon jumps over 3000 frames.
+
+## Distinguish a crashed CPU from a logic deadlock (heartbeat + state overlay)
+
+When a game *hangs* (as opposed to boots black), you need to know **which kind**
+of hang it is. Build a debug overlay (behind a `-DRT_DEBUG` flag) with two parts:
+
+- A **per-frame heartbeat square** that toggles/advances every rendered frame.
+  If it **freezes**, the SH-2 itself crashed (exception, bad pointer, tight infinite
+  loop with interrupts off). If it **keeps animating** while the game is stuck, the
+  CPU is fine and you have a **logic deadlock** (a VM waiting on a flag that never
+  clears, a message box awaiting input that isn't wired). One glance splits the
+  search space in half.
+- An **interpreter-state readout** — active event, current command opcode, pending
+  move route, message/movement flags. For a bytecode-VM game this turns "it froze
+  in the opening cutscene" into "it's parked on opcode 0x6C waiting on switch 12."
+  A shipped RPG tracked down an opening-cutscene freeze exactly this way.
+
+This is the hang counterpart to the black-screen ladder above: the ladder is for
+*nothing drew*; the heartbeat/overlay is for *it drew once and then stopped*.
+
+## Build debug warps into deep content
+
+Long games hide the interesting states behind hours of play the harness can't
+sit through. Add **debug warps** — title-screen button combos that jump straight
+into a test map, a specific scene, or a battle (a shipped RPG uses hold-UP/DOWN
+at START for two map zones and B for a test battle). Harmless in normal play,
+they let a PicoDrive script reach a battle or a late map in a handful of frames.
+Pair them with the verification accelerator (fast-forward long waits) so any
+scripted scenario is reachable and fast.
+
+## A third telemetry channel: MD work RAM
+
+Besides an SDRAM beacon and the COMM mailbox, the **68000 can mirror a telemetry
+word into MD work RAM** that the harness reads out of the Genesis-side address
+space. A shipped RPG uses this so a test can assert the game reached the **right
+map** by map id. Useful when the SH-2 side's COMM slots are all spoken for and
+the 68000 already owns a value you want to observe; pick whichever of the three
+channels (SDRAM beacon / COMM / MD work RAM) your bus ownership leaves cleanest.

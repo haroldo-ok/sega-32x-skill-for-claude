@@ -232,6 +232,16 @@ When a ROM compiles but shows black, check in this order (details in
    render vs logic → `cmp` the ROMs → rebuild from known-good) rather than
    guessing.
 
+If instead the ROM **draws once and then hangs**, it's a *hang*, not a black
+screen: build a per-frame **heartbeat square** (behind a debug flag) — if it
+freezes the SH-2 crashed; if it keeps animating you have a logic deadlock — plus
+an interpreter/state overlay. See `references/testing.md`.
+
+For a **large content port** (a multi-map RPG), audit the whole project first
+(inventory every map/opcode and what your VM already covers) and settle the
+ROM-banking / 32X-CD question before freezing the asset address format — see
+`references/porting-workflow.md` and `references/architecture.md`.
+
 ## Optimization quick rules (full playbook in references/optimization.md)
 
 When asked to "optimize the code":
