@@ -240,10 +240,11 @@ Consequences to settle **before you freeze the asset compiler's address format**
   (a banked, lazily-activated map/asset directory rather than one flat blob) or a
   **32X-CD build** (streaming from CD). Retrofitting banking after the converter
   emits absolute offsets means rewriting the converter — decide first.
-- **Transform, don't embed, oversized audio.** Replace MP3/WAV streams with
-  legally-redistributable converted audio: short **IMA-ADPCM** cues plus either
-  sequenced YM2612/PSG music or aggressively reduced/banked ADPCM (see
-  `audio.md`).
+- **Transform, don't embed, oversized audio.** Replace MP3/WAV/MIDI streams with
+  legally-redistributable converted audio: short **IMA-ADPCM** cues for SFX, and
+  for music either **MIDI→VGM** (YM2612/PSG, played Genesis-side — the
+  MIDI-to-VGM pipeline in `audio.md` makes a game's MIDI score tractable rather
+  than "a project of its own") or aggressively reduced/banked ADPCM.
 - **Grow the ROM to a valid power-of-two** as content lands (one port auto-expanded
   512 KiB→1 MiB) while keeping the header, checksum, and SDRAM budget valid — and
   keep `romfix.py` rewriting the ROM-end header word so static verification passes.

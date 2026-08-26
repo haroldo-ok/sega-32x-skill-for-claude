@@ -254,3 +254,55 @@ because the techniques below are read from shipping code, not a README summary.
   ~4 MiB window) and **per-scene palettes / banked multi-map directories** for big
   games (`architecture.md`), plus an honest "title-only ≠ done" `PORT_STATUS.md`.
   Converter derived from the `super-sonic-rpg-32x` LCF workflow. https://github.com/haroldo-ok/franzen-32x
+
+## Full-scale RPG ports (RPG Maker 2000)
+
+Two full-source RPG ports that push the "don't port the interpreter" archetype to
+a complete game and to a large-project audit:
+
+- **raintown-slickers-32x** (CrimsonBulb, RM2K JRPG) — a **complete** native port:
+  all 20 maps, the full RM2K **event interpreter** (common-event calls,
+  labels/jumps, forced move routes, conditional branches), a **turn-based
+  front-view battle** system (agility order, Attack/Skill/Defend/Item/Escape,
+  formulas, criticals, EXP/level-ups), a field menu/party, **autotile →
+  deduplicated atlas** (13,025 cells → 243 tiles) with one-byte passability, and a
+  full **streaming-ADPCM music engine** on the slave SH-2 (6 tracks as 11 kHz
+  4-bit IMA-ADPCM streamed from ROM, mixed concurrently with PCM SFX into the PWM
+  FIFOs, with a COMM command protocol and RM2K loop/fade/memorize semantics —
+  `audio.md`). The reference for the full-RPG subsystems in `porting-workflow.md`,
+  and for the **heartbeat + interpreter-state hang diagnosis**, **debug warps**,
+  and **MD-work-RAM telemetry** in `testing.md`.
+  https://github.com/haroldo-ok/raintown-slickers-32x  *(port; original © CrimsonBulb — user supplies data)*
+- **franzen-32x** (scumhead, RM2K/2003) — a **large port in progress**, valuable
+  for its **content-audit-first** method (`audit_game.py`: 176/176 maps, 15,580
+  command records, 45 opcodes, 86.88% VM-covered → a bounded backlog) and its
+  honest `PORT_STATUS.md` ("title-only is not a completed port"). The reference
+  for **auditing scope before building**, the **ROM-banking / 32X-CD decision**
+  for oversized content (~170 MiB source audio vs a ~4 MiB window), per-scene
+  palettes, and **two-phase-commit SRAM saves** (`porting-workflow.md`,
+  `architecture.md`). https://github.com/haroldo-ok/franzen-32x  *(port workspace; original © scumhead — not for redistribution)*
+
+- **pail-court-of-demon-king-32x** (ojosama, RM2K game-jam JRPG) — another
+  **complete** RM2K port on the Raintown engine lineage, and the reference for the
+  RM2K **Pictures layer**: 33 dialogue portraits + cutscene sequences animated in
+  software with runtime **zoom (100–1000%) and 0–100% transparency**
+  (`2d-and-shmup.md`, `porting-workflow.md`). All 30 maps (autotile→**597**-tile
+  dedup atlas, one-byte passability), the full event interpreter incl.
+  `ChangeSpriteAssociation`, front-view battles, field menu, 27 PWM SFX on the
+  slave, debug warps + MD-work-RAM telemetry, hexgl MIT boot foundation, and an
+  exemplary honest **Known gaps** list (music/MIDI, shops, SRAM save, screen
+  tint/shake/weather, random encounters — accepted-and-skipped, documented).
+  User-supplied data (© ojosama, ROM not redistributed).
+  https://github.com/haroldo-ok/pail-court-of-demon-king-32x
+
+## Build-time tools (not games)
+
+- **midi2vgm** — a MIDI → **VGM** (YM2612 + SN76489 + DAC) converter that closes
+  the "music is a project of its own" gap the RPG ports hit. A clean
+  `Ingest → IR → Map+Allocate → Emit` pipeline with the hard chip lessons baked
+  in: per-part FM/PSG routing with demand-driven allocation and cross-pool spill,
+  the ~1.5 ms FM retrigger gap, role-based mixing so the melody isn't buried,
+  offline-pre-mixed DAC percussion with the `0x2B` enable-ordering fix, a PSG
+  noise transient layer, and verification against a cycle-accurate Nuked-OPN2 core
+  (calibrated first). GM drum samples fetched (GPL sample-exception), not bundled.
+  The reference for the **MIDI→VGM music pipeline** in `audio.md`.

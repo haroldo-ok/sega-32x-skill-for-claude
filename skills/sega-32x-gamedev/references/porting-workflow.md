@@ -448,6 +448,13 @@ needs more than the message/choice VM from `super-sonic-rpg`:
 - **Field menu / party**: actor stats, equipment bonuses, usable items, skill
   lists, currency; database (actors/items/skills/enemies/troops/terms) emitted as
   `const` C tables.
+- **Animated picture/overlay layer** (RM2K `ShowPicture`/`MovePicture`/
+  `ErasePicture`): dialogue portraits and cutscene art shown with runtime **zoom
+  (100–1000%)** and **0–100% transparency**, tweened over a duration. There's no
+  blitter or hardware alpha, so do it in software — fixed-point source stepping
+  for scale, stipple or a blend LUT for transparency, advanced by elapsed vblanks
+  (see "Transparency and scaling in 8bpp indexed mode" in `2d-and-shmup.md`). A
+  shipped port animates 33 portraits and dramatic zoom/fade sequences this way.
 - **Preserve the original's timing regardless of render rate**: advance every
   timer (waits, move routes, the message typewriter, battle pacing) by the number
   of 60 Hz **vblanks each frame actually covered**, not once per rendered frame,
