@@ -77,16 +77,20 @@ mode of a naive 32X port, and defeating it is the whole point.
 - **architecture.md** — dual SH-2, the 68000's role, the SDRAM budget, VDP
   framebuffer & palette, the COMM mailbox (**with slot-allocation discipline**),
   the memory-coherency rules (uncached framebuffer vs. cached SDRAM; disjoint-row
-  slave work), **battery-backed cartridge SRAM saves** (bounded checksummed
-  format, corruption detection, pixel-compare restore test), and the SH-2 `long`
+  slave work), **battery-backed cartridge SRAM saves** (versioned checksum +
+  two-phase commit + pixel-compare restore test), the **ROM-size / cartridge-
+  banking / 32X-CD decision** for oversized content, and the SH-2 `long`
   is 32-bit trap.
 - **porting-workflow.md** — the core/shell split, the verified-milestone rhythm,
   desktop-oracle bring-up, build-time **asset conversion** (incl.
   reverse-engineering proprietary containers: LZSS/offset tables, LCF, TMX,
-  autotile), the **"don't port the interpreter — compile content to bytecode + a
-  tiny VM"** archetype, data-driven engines + level-event interpreters, and the
-  **open-source IP model** (GPL vs. game-data licences; CC-BY-NC, CC0, BSD-2,
-  CC-BY-NC-SA, user-supplied data, freeware→from-scratch; mocap/asset provenance).
+  autotile→dedup atlas), the **"don't port the interpreter — compile content to
+  bytecode + a tiny VM"** archetype scaling up to a **full JRPG** (event VM,
+  turn-based battle, party/menu) and to **large ports** (audit scope first,
+  per-scene palettes, banked map directories), data-driven engines + level-event
+  interpreters, and the **open-source IP model** (GPL vs. game-data licences;
+  CC-BY-NC, CC0, BSD-2, CC-BY-NC-SA, user-supplied data, freeware→from-scratch;
+  mocap/asset provenance).
 - **software-3d.md** — a full fixed-point software-3D pipeline (transform,
   perspective projection, flat-triangle rasterizer, painter sort + backface, no
   z-buffer), wireframe/vector and Mode-7/pseudo-3D-road modes, a **first-person
@@ -108,9 +112,15 @@ mode of a naive 32X port, and defeating it is the whole point.
   layer (16-colour palette → CRAM, `sspr`/`pal`/`print`, `btn`, `atan2`/angle
   conventions), fixed-point sprite stepping, and 160×112 → 320×224 doubling.
 - **audio.md** — the PWM stereo FIFO and a software voice mixer; an **8-voice
-  S3M-style tracker mixer** with priority SFX; the **Genesis-side XGM/SGDK**
-  route (YM2612 + PSG driven by the 68000/Z80 with the UI on the SH-2 over COMM);
-  the FIFO-starvation gotcha; and how to actually verify audio.
+  S3M-style tracker mixer** with priority SFX; **streaming BGM as IMA-ADPCM on the
+  slave SH-2** mixed concurrently with PCM SFX (a cross-core COMM command protocol
+  with sequence-number edge detection and RM2K loop/fade/memorize semantics); the
+  **Genesis-side XGM/SGDK** route (YM2612 + PSG driven by the 68000/Z80 with the
+  UI on the SH-2 over COMM); a **MIDI→VGM pipeline** that turns a game's MIDI score
+  into YM2612/PSG/DAC music (per-part FM/PSG routing, the ~1.5 ms FM retrigger gap,
+  offline-pre-mixed DAC percussion, verify against a cycle-accurate core); a
+  **"which music path?"** decision (streaming ADPCM vs MIDI→VGM); the
+  FIFO-starvation gotcha; and how to actually verify audio.
 - **optimization.md** — SH-2 patterns: fixed-point, table lookups, the
   reciprocal-table divide, divide-hoisting, **killing hidden 64-bit `__divdi3`**,
   scanline depth LUTs, 32-bit-aligned framebuffer writes, dirty-rectangle
@@ -121,8 +131,10 @@ mode of a naive 32X port, and defeating it is the whole point.
   script format, black-screen/playability assertions, static ROM verification,
   the harness gotchas, the **rebuild-from-a-known-good-tree** fix, the
   **deterministic desktop-oracle** method (incl. diffing against the original's
-  *own* code), an **SDRAM/COMM liveness beacon** for exact-state assertions, an
-  **in-ROM verification accelerator** for long content, a **catalog of
+  *own* code), **liveness beacons on three channels** (COMM regs / SDRAM struct /
+  MD work RAM) for exact-state assertions, an **in-ROM verification accelerator**
+  and **debug warps** for long content, **heartbeat + interpreter-state
+  hang diagnosis** (crashed CPU vs. logic deadlock), a **catalog of
   "verifies-clean-but-boots-black"** causes, and the shared-math/one-function
   testing principle. Includes audio verification via PCM capture.
 - **examples.md** — a catalogue of real, shipped 32X ports to learn from,
@@ -175,17 +187,23 @@ emulator point-to-point check, and is packaged before moving on.
 | RTS / tactics / grid crawler | ✅ A*, fog of war, deterministic-grid + interp |
 | PICO-8 → 32X porting | ✅ `pico8_api` compat layer + resolution doubling |
 | Interpreter games (RPG Maker etc.) | ✅ compile content → bytecode + tiny VM |
+| Full JRPG (maps, battles, party) | ✅ event VM + turn-based battle + menu/party |
+| Indexed alpha / zoom overlays | ✅ stipple/blend-LUT transparency + fixed-point scale |
+| Large-scope content ports | ✅ audit-first scoping + ROM banking / 32X-CD plan |
 | Dual-core (2nd SH-2) | ✅ COMM job dispatcher; frame-clear/sky/audio offload |
 | PWM audio + mixer | ✅ technique + verification method |
 | 8-voice tracker (S3M) audio | ✅ technique (software mixer → stereo PWM FIFO) |
 | Compressed samples (IMA ADPCM) | ✅ technique (decode + mix on slave SH-2) |
+| Streaming BGM (ADPCM from ROM) | ✅ slave decoder + SFX mix, COMM protocol |
 | Genesis-side music (XGM/SGDK) | ✅ technique (YM2612/PSG via 68000+Z80, SH-2 UI) |
-| Battery-backed SRAM saves | ✅ technique (bounded format + restore test) |
+| MIDI → VGM music generation | ✅ build-time MIDI→YM2612/PSG/DAC pipeline |
+| Battery-backed SRAM saves | ✅ versioned checksum + two-phase commit + test |
 | Split-screen 2-player | ✅ technique (per-view camera/HUD, clipped) |
 | Porting (DOS/JS/PICO-8/RE) | ✅ core/shell split, asset pipeline, IP model |
 | Optimization | ✅ fixed-point, tables, reciprocal divide, aligned writes |
 | Framerate / headroom measurement | ✅ frame-counter read + continuous ballast probe |
 | Automated testing | ✅ static ROM checks + headless PicoDrive |
+| Hang vs. black-screen diagnosis | ✅ heartbeat + interpreter-state overlay |
 | Deterministic oracle testing | ✅ record/replay + diff vs the original's own code |
 
 ---
@@ -253,11 +271,38 @@ actually using it and by studying a large body of shipped 32X ports:
   - **An RPG Maker 2000 fangame** — the **"don't port the interpreter"** archetype:
     a build-time LCF reader + event-page→bytecode compiler with a ~250-line
     runtime VM, autotile composition, and a median-cut global palette.
+  - **A complete RM2K JRPG** (Raintown Slickers) — the archetype scaled to a whole
+    game: all 20 maps, the **full event interpreter** (common-event calls,
+    labels/jumps, flattened move routes), a **turn-based front-view battle**
+    system, a field menu/party, **autotile → deduplicated atlas** (13,025 cells →
+    243 tiles), a full **streaming-ADPCM music engine** (6 tracks streamed from
+    ROM, mixed concurrently with SFX on the slave SH-2 with loop/fade/memorize),
+    and the **heartbeat + interpreter-state** hang diagnosis and **debug warps**
+    that go with a game that big.
+  - **A large RPG port in progress** (Franzen) — the value is method, not a
+    finished game: a **content-audit-first** pass (176 maps, 15,580 command
+    records, 45 opcodes, 86.88% VM-covered → a bounded backlog), an honest
+    "title-only is not done" status, the **ROM-banking / 32X-CD decision** for
+    oversized content (~170 MiB source audio vs a ~4 MiB window), per-scene
+    palettes, and **two-phase-commit SRAM saves**.
+  - **Another complete RM2K JRPG** (Pail in the Court of the Demon King) — the
+    reference for the RM2K **Pictures layer**: 33 dialogue portraits and cutscene
+    sequences animated in software with runtime **zoom (100–1000%) and 0–100%
+    transparency** (no blitter or hardware alpha — stipple/blend-LUT + fixed-point
+    scaling), all 30 maps, front-view battles, a field menu, 27 PWM SFX, and an
+    exemplary honest **Known gaps** list.
 
 Several of these ports (the circuit racer, the jet-ski racer, the RTS, the
-Arkanoid/Tyrian lineage, the RPG) explicitly credit `sega-32x-skill-for-claude`
+Arkanoid/Tyrian lineage, both RPGs) explicitly credit `sega-32x-skill-for-claude`
 as their workflow — the skill is in real, repeated use, and its guidance is fed
 back from what that use uncovers.
+
+The skill also folds in a build-time **tool**, not just games: **midi2vgm**, a
+MIDI → VGM (YM2612/PSG/DAC) converter that makes a game's MIDI score playable on
+the Genesis side — closing the "music is a project of its own" gap those RPG
+ports hit, with the hard chip lessons (per-part FM/PSG routing, the FM retrigger
+gap, offline-pre-mixed DAC percussion, verify against a cycle-accurate core)
+captured in `audio.md`.
 
 Every technique in the skill has either shipped in one of those builds or been
 lifted from a working, shipped 32X ROM — and cited.
@@ -274,11 +319,15 @@ lifted from a working, shipped 32X ROM — and cited.
 - **Full ports of huge codebases are scoped honestly.** A 200k-line SDL/GPL game
   won't fit or run on two SH-2s with 256 KB of RAM; the right move is a
   clean-room reimplementation of its design, and the skill flags that instead of
-  pretending.
+  pretending. For **large data-driven games** it goes further — audit the content
+  first to bound the work, decide **ROM banking or a 32X-CD build** before
+  freezing the asset format when the honest total blows past the ~4 MiB window,
+  and treat a **title-only ROM as *not* a finished port**.
 - **Intellectual property is respected.** The default is to ship **clean-room**
   assets and provide a build step so a user converts original data **they own**
-  (the WinWar / user-supplied `DATA.WAR` model). The skill describes techniques;
-  it doesn't redistribute other games' code, art, or music.
+  (the WinWar / user-supplied `DATA.WAR` model, and the same for RM2K RPG ports
+  where the ROM is a personal conversion of a game the user supplies). The skill
+  describes techniques; it doesn't redistribute other games' code, art, or music.
 - **The devkit compiler has known traps.** GCC 12.1 for SH-2 miscompiles a few
   patterns (12-byte struct returns, 64-bit multiply chains, dropped stores, calls
   across mixed optimization levels). The skill lists them and writes around them

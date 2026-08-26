@@ -107,7 +107,11 @@ Full details, exact flags, and CI-cache tricks: **`references/toolchain-and-buil
   *platform-clean core* and a *thin 32X shell*, get it running on desktop first
   as an oracle, then bring it up on hardware incrementally. **PICO-8 carts** are
   a recurring target with a reusable compatibility layer — see
-  **`references/pico8-porting.md`**.
+  **`references/pico8-porting.md`**. For **interpreter-driven games** (RPG Maker, VN engines),
+  don't port the player — compile the content to bytecode + a tiny VM; for a
+  **large** one, run a content audit first to bound the work, and decide ROM
+  banking / 32X-CD before freezing the asset format (see
+  `references/porting-workflow.md` and `references/architecture.md`).
 - **Creating a new native 32X game from scratch** → start from the project
   layout below and `references/architecture.md`; the porting doc's "bring-up
   order" still applies.
@@ -287,7 +291,8 @@ When asked to "optimize the code":
 - `references/strategy-and-grid.md` — RTS/tactics/grid-crawler games: host-tested
   A* pathfinding, three-state fog of war, deterministic grid logic with
   interpolated rendering, RTS AI/economy/construction, and turn-based grid rules.
-- `references/audio.md` — PWM FIFO, software voice mixer, PCM-capture verification.
+- `references/audio.md` — PWM FIFO, software voice mixer, PCM-capture verification. Also a **MIDI→VGM** pipeline (YM2612/PSG) to
+  generate Genesis-side music from a game's MIDI score.
 - `references/optimization.md` — SH-2 optimization patterns from d32xr, **plus
   how to measure effective framerate through the video harness** and the
   fillrate-vs-compute playbook.

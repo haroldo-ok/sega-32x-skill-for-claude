@@ -122,3 +122,34 @@ viewport halves of the one 320×224 framebuffer:
 - One HUD per player, positioned in its own viewport. Watch the fill budget: two
   passes doubles pixel writes, so the 60/n vblank math (`optimization.md`) is
   tighter — profile with `fillcount`.
+
+## Transparency and scaling in 8bpp indexed mode
+
+The 32X framebuffer is 8bpp *indexed*, so there is no hardware alpha and no
+hardware scaling — but games still need semi-transparent overlays (dialogue
+portraits, fades, cutscene pictures) and runtime zoom. A shipped RM2K RPG (Pail)
+animates 33 portraits with **100–1000% zoom and 0–100% transparency** entirely in
+software. The two techniques:
+
+- **Indexed "alpha" — stipple or a blend LUT.**
+  - *Stipple/dither*: for a coarse transparency, skip writing a fraction of pixels
+    in an ordered pattern (write 1-in-2 for ~50%, a 4×4 Bayer threshold for finer
+    steps). Zero extra memory, slightly screen-door, and plenty for portrait
+    fade-ins.
+  - *Blend LUT*: for smooth blends, precompute `blend[src][dst] → index` (or a few
+    fixed levels: 25/50/75%) by mixing the two palette RGBs and snapping to the
+    nearest palette entry. One table read per pixel; costs 64 KiB per level, so
+    keep only the levels you use.
+- **Scaling — fixed-point source stepping.** Zoom is a scaled blit: walk the
+  destination rectangle and step the source coordinate by a 16.16 increment
+  (`src += (1<<16)*srcW/dstW`), reading `src>>16`. No divide in the inner loop
+  (compute the step once), transparent index 0 skipped as usual. This is the same
+  fixed-point stepping used for Mode-7/billboard scaling (`pico8-porting.md`,
+  `optimization.md`).
+- **Timed animation.** Drive zoom/alpha/position from a start→end value over a
+  duration, advanced by **elapsed vblanks** (not per rendered frame) so the
+  motion keeps real time under a variable render rate (see the RPG timing note in
+  `porting-workflow.md`).
+
+This is what makes an RM2K **Pictures** layer (ShowPicture / MovePicture /
+ErasePicture) and cutscene zoom-fades work on hardware with no blitter.
