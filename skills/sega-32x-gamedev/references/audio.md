@@ -18,7 +18,9 @@ tracks are third-party copyrighted).
 0x20004038  PWM mono FIFO    (writes both L+R)
 ```
 Pick a rate you can sustain (11,025 Hz is a good, robust choice) and write
-one L and one R amplitude per sample. Amplitude is ~12-bit into the FIFO.
+one L and one R amplitude per sample. The amplitude range is **1..CYCLE, centred
+at ~CYCLE/2** — e.g. with `CYCLE = 0x415` (≈22 kHz NTSC) silence is ~517 — so
+size mixer gains to the cycle you chose, not to a fixed bit depth.
 
 ## Software mixer
 
@@ -39,13 +41,22 @@ one SH-2.
 
 ## Feeding the FIFO — cadence is everything
 
-The PWM FIFO is **tiny (a few entries)**. Two ways to keep it fed:
+The PWM FIFO is **tiny (a few entries)**. Ways to keep it fed, in order of how
+much you should trust them on a real console:
 
-- **Poll-fill at the sample rate** (simplest, deterministic, emulator-friendly):
-  a tight loop / timer writes the next mixed sample every ~1/rate. This is what
-  PWM Tracker does.
-- **DMA** (more complex): let the SH-2 DMA controller stream a buffer; refill on
-  the half/full interrupt. More headroom, more moving parts.
+- **Slave SH-2 DMA from ping-pong buffers — the real-hardware-proven default.**
+  The slave mixes ahead into SDRAM buffers and **SH-2 DMA channel 1**, paced by
+  the PWM's DREQ, streams them to the FIFO; the DMA-end IRQ flips buffers. This
+  is the Doom 32X Resurrection scheme, adopted by a shipped Tempest 2000 port
+  after its first design proved silent on hardware. Details in "Real-hardware PWM
+  via slave DMA" below. Use this for anything that will run on a real 32X.
+- **Poll-fill / per-sample IRQ** (simplest, deterministic, emulator-friendly): a
+  tight loop, timer, or PWM interrupt writes the next sample every ~1/rate. PWM
+  Tracker and several ports do this and **it verifies fine in PicoDrive** — but a
+  Tempest port found that driving PWM one sample at a time from the master's
+  PWM-timer interrupt **played in emulators and was silent on a real 32X**.
+  Treat it as *emulator-verified only* until it has been heard on hardware; a
+  polled single-voice player (FULL polled on the mono FIFO) is the safer variant.
 
 ### The gotcha that turns music into buzz
 
@@ -279,3 +290,177 @@ Two viable, very different routes for music — pick per project:
 A game whose soundtrack is a huge MIDI (see the ROM-budget note in
 `architecture.md`) usually wants MIDI→VGM; one with a few recorded loops and room
 to spare is simplest with streaming ADPCM.
+
+## Real-hardware PWM via slave DMA (the proven recipe)
+
+The recipe a shipped Tempest 2000 port copied from Doom 32X Resurrection after
+its interrupt-per-sample design turned out silent on a real console:
+
+- **PWM**: `CTRL = 0x0185` (TM=1, RTP=1, L/R routing); `CYCLE` from the NTSC/PAL
+  clock for your rate (22.05 kHz there).
+- **DMA**: slave SH-2 **DMA channel 1**, request source = PWM DREQ, destination
+  `0x20004034` — **32-bit long writes fill L and R in one transfer**;
+  `CHCR1 = 0x18E5`; the DMA-end interrupt flips the ping-pong buffers. Its
+  vector and level are **yours to choose** (programmed through the DMAC vector
+  register) — Tempest uses vector 66 / IPRA level 4, Fight For Life vector 40 /
+  level 14 — so match whatever your crt0 vector table installs rather than
+  copying a number. Kengeki computes `CYCLE = 23,011,361 / 22,050 + 1` (NTSC) and
+  streams 368-sample stereo blocks.
+- **Read the buffers through the `0x2000_0000` cache-through mirror** — the slave
+  wrote them through its cache; DMA reads physical memory (the cross-core cache
+  rule from `architecture.md`, applied to a DMA engine).
+- **Ramp from 0 to the centre value before starting**, so the speaker doesn't
+  thump.
+- **Never fetch audio from the cartridge bus on the slave while the master
+  renders.** Copy the tune's sample data **ROM → SDRAM at load** (Tempest copies
+  up to 136 KiB) and mix **several buffers ahead of the DMA** (up to four
+  368-frame buffers). Cart-bus contention between the cores is a hardware effect
+  emulators under-model.
+- **On underrun, repeat the current buffer** rather than skipping ahead, so time
+  doesn't shift; count underruns and show the counter in a `-DSHOW_FPS` build.
+- The **68000 runs from Genesis work RAM**, not ROM, for the same reason — keep
+  it off the cart bus — and the **Z80 is held in reset** when all audio is PWM.
+
+### A polled single-voice player (Chilly Willy's recipe)
+
+For SFX-only games, a much smaller real-hardware-rules player (a shipped Pacamaze
+port): the slave runs **one preemptive voice**, polls **FULL on the mono FIFO**,
+and emits each 11 kHz byte **twice** into a **22,050 Hz** clock
+(`CYCLE 0x415` NTSC / `0x40B` PAL, `CTRL 0x185`), with samples **centred on 517**
+and a **non-blocking MIN→CENTRE anti-click ramp** at start. The master triggers
+via a COMM word whose `bit15` is a **toggle** and low bits are the sample id —
+another edge-detect-not-value scheme (cf. the sequence-number protocol above).
+Note the emulator artefact: **PicoDrive renders a ~100 ms filtered thump during a
+black-screen boot** (its empty-FIFO model); on hardware the ramp keeps boot
+silent — don't "fix" a sound that only exists in the emulator.
+
+### If you do drive PWM from an interrupt: the routing details
+
+A shipped Alien Assault II port mixes four 11 kHz PCM voices from a per-sample
+PWM interrupt on the slave (emulator-verified; see the caveat above). The
+plumbing is easy to get wrong:
+
+- The slave's interrupt mask is a **byte register at `0x20004001`** (bit 0 = PWM).
+- The pending bit is cleared by a **write to `0x2000401C`**.
+- Install the handler in **both vector slots 0x43 and 0x44** — PicoDrive and the
+  hardware documentation number the PWM interrupt differently.
+
+## A ProTracker MOD player on the slave
+
+Tempest's 8 MiB build plays the original Jaguar soundtrack (seven ProTracker
+tunes) with an on-SH-2 MOD player (effects 0–6, 9, A–D, E1/E2/E9/EA–EE, F) mixed
+with four SFX voices at 22.05 kHz. Lessons that transfer to any tracker player:
+
+- **Tick at 50 Hz, not at the console's vblank.** ProTracker's default tempo
+  (125 BPM, speed 6) already *is* 50 ticks/s — a row every 6 ticks — and that is
+  what both the Jaguar replayer (every VBL on PAL, 5 of every 6 on NTSC) and a
+  Mr. Boom port's player reproduce. The trap is ticking the player from the 60 Hz
+  NTSC vblank, which plays every tune **20% fast**. Drive the tick from a 50 Hz
+  accumulator (or the 5-of-6 rule), and check the original replayer's tick source
+  if the format isn't plain ProTracker.
+- **Pre-decode patterns and fold the period maths.** Unpack patterns at build
+  time into `(sample, period-index, effect, param)` so the player never unpacks
+  nibbles at 22 kHz; convert a period to a 16.16 playback step with **one divide
+  per note** (e.g. `10542000 / period`) and nothing per sample. Mr. Boom plays four
+  of the original's 4-channel modules this way (`.XM` files would need a second
+  parser).
+- **Headroom with a soft knee, not hard clipping.** Choose per-channel gains so
+  4 MOD channels + SFX stay inside the PWM range, and apply a **soft knee above
+  ±384** instead of clamping.
+- **Rate-limit SFX per id and make speech exclusive**, so a multi-kill doesn't
+  stack ten identical explosions or overlap two voice clips.
+- **Select tunes exactly as the original does** (Tempest reproduces the
+  Jaguar's `webtunes` table per 16-level group), and fall back to a small synth
+  sequencer when a tune isn't in the ROM — the 4 MiB build only fits the title
+  theme, the 8 MiB build carries everything (see SSF banking in
+  `architecture.md`).
+
+## More real-hardware audio lessons (five more shipped ports)
+
+Fight For Life, Blade Arena: Kengeki and WipEout all feed PWM by **slave DMA**,
+independently confirming the recipe above. What they add:
+
+- **Mix at the source's native rate when you can.** Fight For Life mixes at
+  **20,774 Hz — the Jaguar DSP's rate** — so the original's 8.8 pitch values play
+  1:1 with no conversion table.
+- **Hand-write the inner mix loop if GCC won't use `muls.w`.** Fight For Life's
+  `mix_sh2.s` mixes in 5 instructions per sample (10 per 2, unrolled); GCC would
+  not emit the 16×16 multiply.
+- **On underrun, keep DREQ fed** — either repeat the current buffer (Tempest) or
+  queue a short **silence block** (Fight For Life: 16 samples). Never let the DMA
+  stall waiting for the mixer.
+- **The slave can render *and* mix.** Kengeki runs its 12-voice mixer inside the
+  **DMA-complete IRQ**, so the slave's main loop is free to rasterise half the
+  screen; Fight For Life's slave draws the backdrop, floor and shadows and calls
+  `audio_service()` every 8 floor quads and every 16 backdrop rows. A *music OFF*
+  switch that skips the sequencer entirely hands the time back (+0–2 fps).
+- **Use the slave for audio without sharing SDRAM.** Mr. Boom's slave never
+  touches SDRAM the master writes — its only input is a COMM word in uncached
+  peripheral space — so long framebuffer writes can't starve it, and its FIFO wait
+  is bounded so it can't wedge.
+
+### Song clocks overflow — never store `ticks << 16` in 32 bits
+
+Fight For Life's title music froze for good at **66 seconds**: its sequencer kept
+time as a 16.16 `uint32`, which can only count to tick 65,535 (66.2 s at 990
+ticks/s). The 117 s title theme's next event was never reached; held and looping
+notes kept sounding, so it read as "stuck", not "stopped". Keep **whole ticks and
+a separate fraction**. Test with a host render longer than the longest song (FFL's
+`make soundcheck` renders 250 s and requires both loop jumps — and fails with the
+clock forced back to 16 bits).
+
+### Read the sample-loop format exactly
+
+The same port had read a patch's loop *length* as the loop *start*, so a held
+guitar note replayed nearly the whole riff instead of its last 3,416-sample
+sustain tail. Decode loop fields straight from the original replayer's code, and
+gate it with a host render that measures the RMS across the loop point.
+
+### Fitting ROM: compress long streams, mind the 512 KiB page
+
+On an SSF cart, content that doesn't divide into **512 KiB pages** wastes the rest
+of each page. City Carnage's eight 40-second radio stations (440 KB each as 11 kHz
+8-bit PCM) each burned a whole page; storing them as **4-bit IMA ADPCM** put two
+per page and took the cartridge from 5.5 MiB to **3.5 MiB** with nothing cut. The
+decode is *cheaper* on the slave than PCM fetches: two table lookups, shifts and an
+add per nibble, and one banked-ROM read per two samples instead of one. Encoder
+details that matter:
+
+- **Beam-search the encoder**, scoring whole trajectories on the error that reaches
+  the speaker, instead of greedy per-sample IMA quantisation: **+2.2 dB** for free,
+  same bitstream format and decoder.
+- **Break ties on the 16-bit error.** Scoring only in the 8-bit output domain is
+  full of ties; resolving them toward a smaller step index lets the step collapse
+  to its floor and the track decodes to near-silence while still looking like a
+  valid stream.
+- **Prime the loop.** A decoder restarting at predictor 0 / step 0 fades in for
+  ~70 samples every lap. Store the state the decoder ends in (a 4-byte header) and
+  restore it at the loop seam.
+- **Test the decoder that ships**: lift every stream back out of the built ROM and
+  decode it with the decoder **compiled from the SH-2 source**, checking
+  sample-for-sample against the encoder's model and SNR against the original. The
+  emulator's "RMS in range" check passes a swapped nibble order, a byte-swapped
+  header or an off-by-one step clamp; this check failed all six such bugs when
+  they were tried.
+
+Short one-shot SFX can stay raw PCM: if they already fit their page, compressing
+them saves nothing.
+
+### Audio assertions that catch real failures
+
+- **Music never goes silent** (quietest block RMS above a floor) and **SFX cut
+  through** it (peak ≥ 1.4× the floor) — Mr. Boom.
+- **No DC offset**: a wrong PWM centre value shows up as a DC thump long before
+  you'd hear it.
+- **Exactly silent when off**: Fight For Life's music-OFF test requires RMS 0.0
+  while off and > 100 when switched back on.
+- **Not clipping**, over every song, rendered on the host with the shared mixer
+  (Kengeki's `song_render.c`, FFL's 300 s per song).
+
+### Original music without licensed samples
+
+Kengeki ships 13 songs whose every instrument is **synthesised at build time** in
+Python — Karplus-Strong plucked strings, cabinet-filtered distortion, formant
+choirs, additive organ, inharmonic bells — written in a small pattern DSL, with a
+`LINT=1` pass that flags on-beat melody notes a semitone off the chord. It's a
+fully IP-clean route to a full soundtrack when you can't ship the original's.

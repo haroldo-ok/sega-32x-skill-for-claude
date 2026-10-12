@@ -107,8 +107,21 @@ licence). Grouped by what they best demonstrate.
   https://github.com/haroldo-ok/pico-city-builder-32x
 
 ### Software-3D games (see `software-3d.md`)
-- **tempest-2k-32x** — a **vector tube shooter**; 16 3D webs, translucent lane
-  polys, dual-SH2 (slave = real-time PWM synth + 140 BPM techno loop).
+- **tempest-2k-32x** (Jeff Minter / Llamasoft, Jaguar 1994) — grew from an early
+  vector-tube prototype into a full native reimplementation of the Tempest 2000
+  game mode, with real-hardware testing. The **level data is extracted verbatim**
+  from the annotated Jaguar source (37 webs, the 48-entry sequence, lane
+  orientation tables) while the engine is rewritten for the SH-2s
+  (`porting-workflow.md`). The reference for **SSF mapper banking** — the
+  park-the-SH-2s/RV/`0xA130F1` protocol real carts need, a **boot-time page
+  self-test**, and 4 MiB vs 8 MiB builds (`architecture.md`) — and for
+  **real-hardware PWM**: its first per-sample-IRQ design was **silent on a real
+  32X**, fixed by the d32xr **slave-DMA ping-pong** scheme with ROM→SDRAM sample
+  copies and mix-ahead (`audio.md`). Also an on-SH-2 **ProTracker MOD player** at
+  the Jaguar's 50 Hz tick, soft-knee mixing, battery-SRAM hi-scores + level key,
+  attract mode, 60 Hz logic with catch-up at 30 fps render, and a host `sim.c`
+  scripted player. Fan port for preservation; the 8 MiB build embeds the original
+  soundtrack, so treat its ROM as not freely redistributable.
   https://github.com/haroldo-ok/tempest-2k-32x
 - **fighting-game-3D-32X** — a DirectX **3D fighter** retarget; clean-room
   flat-shaded polys, mocap-baked poses with `THIRD_PARTY_NOTICES`/`MOCAP_BAKE`,
@@ -306,3 +319,112 @@ a complete game and to a large-project audit:
   noise transient layer, and verification against a cycle-accurate Nuked-OPN2 core
   (calibrated first). GM drum samples fetched (GPL sample-exception), not bundled.
   The reference for the **MIDI→VGM music pipeline** in `audio.md`.
+
+- **tuxracer-32x** (Tux Racer, GPL) — an explicitly **work-in-progress
+  "vibe-port"** of the open-source 3D downhill racer; the interesting part is its
+  **verification harness**, not new rendering. The reference for: keeping
+  **instrumented/benchmark builds on separate ROM names** (a `-DBENCH` black-screen
+  build once overwrote the release ROM and static checks missed it) with a
+  `.verified` provenance stamp; a **game-mode + speed telemetry word** (COMM12/14)
+  with **mode-transition assertions**; **semantic scene-content frame checks**
+  (snow/sky/subject proportions); and script-DSL **telemetry asserts + `waitlo`
+  wait-until-state** — all in `testing.md`. Credits `sega-32x-skill-for-claude`.
+  https://github.com/haroldo-ok/tuxracer-32x  *(WIP; original Tux Racer © its authors, GPL)*
+
+## More ports — DOS originals, a J2ME RPG, and hardware-proven audio
+
+- **alien-assault-2-32x** (Johan Peitz / Crowfoot Software, DOS 1997, freeware
+  **with source**) — a top-down 8-way shooter translated from the original C++
+  into a portable C core + 32X shell (all four levels, weapons, store, level
+  computers). The reference for **COMM boot-stage markers** (1–12 plus 0xE/0xF
+  exception codes), **harness audio capture with named markers** and an SFX gate,
+  **palette-identity**, **byte-identical pause** and distinct-game-over assertions
+  (`testing.md`); the **port A TH bit** and **FM-before-VDP** gotchas
+  (`architecture.md`); the slave **PWM interrupt routing** details (`audio.md`);
+  and the **`just_opened` guard** when flattening modal loops
+  (`porting-workflow.md`). Combat runs at a deterministic 3 frames/tick. Note: its
+  SFX are clips from a third-party mod, embedded for personal use.
+  https://github.com/haroldo-ok/alien-assault-2-32x
+- **pacamaze-32x** (Moons Vestin, DOS 1995) — a first-person "Doom meets Pac-Man"
+  maze shooter **reverse-engineered from the `.EXE`** into a written
+  `GAME_SPEC.md`, then ported faithfully (`porting-workflow.md`). A 256-ray
+  raycaster with DOS-identical shade maths, **SH-2-tuned without changing
+  pixels** (`software-3d.md`); 70 Hz tick model, vblank-normalised; a **polled
+  single-voice PWM player** to Chilly Willy's real-hardware recipe with WAV
+  capture in the harness (`audio.md`, `testing.md`); the MIT hexgl boot
+  foundation. User-supplied original data; third-party SFX, personal use.
+  https://github.com/haroldo-ok/pacamaze-32x
+- **doom-rpg-32x** (id Software, J2ME 2005) — a **clean-room engine** for the
+  turn-based crawler, with maps/graphics/text/SFX converted at build time from the
+  user's own `.jar`: 11 maps, turn-based ranged combat, keys/doors, NPC dialog,
+  automap, a 160×72→320×144 textured raycaster with one shared shade LUT, IMA
+  ADPCM voices with stealing on the slave. The reference for **building and
+  testing with no proprietary data** (a placeholder-asset generator and a
+  synthetic-archive converter self-test), **emulator scripts generated from the
+  converted maps and validated against a Python model**, and host raycaster tests
+  against reference PPMs (`testing.md`). Music is decoded but not yet wired — an
+  honest roadmap item. Game data © id Software, never committed.
+  https://github.com/haroldo-ok/doom-rpg-32x
+
+## Full-source workspaces: five more ports (studied from their sources and docs)
+
+Each of these workspaces bundles a copy of this skill as its workflow guide.
+
+- **wipeout-32x** (inspired by Dominic Szablewski's WipEout rewrite) — an
+  anti-gravity racer on the software-3D pipeline: three circuits and all eight
+  team ships parsed from the original's track/model files, 4 racers, 30 fps,
+  slave-SH-2 synth audio. The reference for the **boot-BIOS `.data` underflow**
+  (a ROM with no initialised data wipes SDRAM before `main`; fixed with a 16-byte
+  anchor — `architecture.md`), a **C¹-continuous track slope** and a
+  **spring-damped chase camera** (`software-3d.md`), and the fixed-point
+  **unit-mismatch** bug that let CPU ships outrun homing missiles
+  (`porting-workflow.md`). Its README attributes visibility to setting CRAM bit 15
+  on every entry; `architecture.md` explains why that only matters when the Mega
+  Drive layer has content. Uses geometry from the original game files — not
+  redistributable on that basis.
+- **mrboom-32x** (Remedy's 1997 Mr. Boom; modern source Javanaise/mrboom-libretro)
+  — an 8-player Bomberman with **two renderers over one core**, and the reference
+  for the **hybrid renderer**: Mega Drive tilemaps + sprites driven by the 68000
+  from an SH-2 delta display list passed through the framebuffer tail, a two-stage
+  handshake against **sprite tearing**, the **contiguous sprite-tile** rule, and the
+  layer-compositing rule (`architecture.md`). Also: rewriting a machine-translated
+  asm2c source **against its data model** (`porting-workflow.md`); lattice arenas
+  proven connected over seeds (`strategy-and-grid.md`); byte-exact
+  renderer-vs-grid, never-all-hidden and build-time tile-distinctness tests
+  (`testing.md`); a ProTracker player at 50 Hz and DC-offset/never-silent audio
+  checks (`audio.md`). Art ripped from the author's published captures and the
+  embedded DOS heap; a fan rewrite.
+- **ffl32x** (Fight For Life, Atari Jaguar 1996, from the user's copy of the
+  released source archive) — a 3D fighter at 20 fps (from 6), with all 11 models,
+  5,697 frames of motion capture, the move/AI tables and 20 FULSYN songs extracted
+  from the source. The reference for **SH-2 shifts being libgcc calls**
+  (9 → 12 fps), **two-ended work stealing** across both SH-2s, **VDP auto-fill**,
+  floor merging by per-primitive cost, and PicoDrive's lack of a cache model
+  (`optimization.md`); **slave DMA PWM at the Jaguar DSP rate** with an asm mixer
+  and the **66-second song-clock overflow** (`audio.md`); row-vector→column-vector
+  skeleton conversion, mesh-revision consistency and **root-motion teleports**
+  (`porting-workflow.md`); and exhaustive hitprobe, invariant detectors,
+  mutation-validated checks and reproducible builds (`testing.md`). Labelled an
+  unofficial fan port; console logo removed from the title; original author
+  credited first.
+- **citycarnage32x** (a clean-room GTA 1-style sandbox derived from Carnage3D's
+  design; no GTA or Carnage3D assets) — an **extruded fake-3D city**
+  (`software-3d.md`) on a 3.5 MiB SSF cart. The richest real-hardware record here:
+  **saves that worked only in emulators** (SSF bank windows are ROM; `$300001`,
+  `SRM3M`, EverDrive page 31, X-series upper half), a **silent boot from a bank
+  switch under the slave's ROM code**, and the Mega Drive-layer **compositing probe**
+  (`architecture.md`); **ADPCM radio** that saved 2 MiB with a beam-search encoder
+  and a decoder test compiled from the ROM source (`audio.md`); a **longword
+  transparent blitter**, **64 headings from 33 sprites**, and a **frame-time
+  governor** with hysteresis plus ms readouts (`optimization.md`); colour-coded
+  **hardware probe ROMs** (`testing.md`).
+- **toshinden32x — Blade Arena: Kengeki** (an original weapon fighter modelled on
+  the structures a static recompilation documents for Battle Arena Toshinden; own
+  name, cast and generated assets) — the reference for **adaptive two-CPU banded
+  rasterisation** proven pixel-identical, the **deferred flip** with an interval
+  histogram, `ASR()` and an `asr_rewrite.py` tool, and an **interpreter-build cycle
+  profiler** for PicoDrive (`optimization.md`); a 12-voice mixer in the slave's
+  DMA-complete IRQ while the slave also rasterises, and **fully synthesised
+  original music** with a harmony lint (`audio.md`); a PSX-style ordering-table
+  renderer (`software-3d.md`); render-only animation layers that keep replays
+  byte-identical (`porting-workflow.md`, `testing.md`).

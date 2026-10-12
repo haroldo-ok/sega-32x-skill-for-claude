@@ -469,3 +469,164 @@ palette-remapped asset groups**, decided up front. Likewise emit a **banked
 multi-map directory with lazy map activation** rather than one flat map blob, and
 **resolve RM2K map-tree inheritance** (music/background/permissions/encounters
 inherited down the tree) into each generated map at build time.
+
+## Porting from a binary-only original: write the spec first
+
+When there is **no source** — only the DOS `.EXE` and its data — reverse-engineer
+into a **written mechanics specification** before writing the port. A shipped
+Pacamaze port (1995 DOS "Doom meets Pac-Man") disassembled `PACAMAZE.EXE`, kept
+the dumps in `re/` and working notes in `decoded/`, and wrote
+**`docs/GAME_SPEC.md`**: tick model (70 Hz), ghost AI (greedy), the
+newest-bullet kill aura, the ammo economy, speeds, SFX trigger points, HUD text,
+the renderer's exact distance/shade maths. The port is then implemented *against
+the spec*, and the spec is what host tests assert. Keep reference screenshots of
+the original running (`emu/`) to compare frames against.
+
+Why the spec step matters: disassembly answers "what does this instruction do",
+not "what is the rule"; writing the rule down forces the second question, and a
+reviewer (or a later you) can check the port against prose instead of assembly.
+
+## Reimplement the engine, extract the data verbatim
+
+When the original's code targets hardware the 32X doesn't have, **don't
+recompile it — rewrite the engine natively and lift the *data* verbatim.** A
+Tempest 2000 port couldn't use the Jaguar source (Tom/Jerry GPU/DSP RISC and the
+Jaguar blitter don't exist on the 32X), but extracted from the annotated source
+all 37 web shapes, the 48-entry level→web sequence, the per-lane orientation
+tables and the player's start lane (`tools/extract_webs.py` → `webdata.h`), and
+reproduced tune selection and sound cues from the original's tables. Same idea as
+the data-driven-engine section, applied when the "data" lives inside assembly
+source rather than separate files. Doom RPG does the same from the J2ME release:
+a clean-room engine, with maps/graphics/text/sound converted from the user's own
+`.jar` (which is just a zip of `palettes.bin`, `levelNN.bsp`, …).
+
+## Modal loops become flat state machines — guard the first tick
+
+DOS games often implement sub-screens as **blocking loops**
+(`while (!confirm) { draw(); poll(); }`). Ported to a one-tick-per-frame state
+machine, the button press that *opened* the screen is still held on the next
+tick and **immediately closes or confirms it**. The original got correct
+behaviour for free from its modal loop; the port needs an explicit
+**`just_opened` guard** (or a require-release-then-press edge) so the sub-screen
+stays open until a *fresh* confirm (Alien Assault II's level-computer map /
+store / statistics screens). Check every modal you flatten for this.
+
+## Third-party sound packs: keep them replaceable
+
+Two of these ports replace PC-speaker or silent originals with clips from a
+large community mod's sound bank. That bank mixes material of mixed provenance,
+and the ports themselves say the sounds **remain (c) their authors** and are
+embedded **for personal use — replace before any commercial use**. If you do
+this:
+
+- Keep the clips **out of the engine**: a converter (`tools/mksfx.py`) that
+  decodes, trims, DC-strips, normalises and resamples from the pack, plus a
+  **`SOURCES.txt` recording the archive's checksum and each clip's path** — so
+  the bank can be regenerated or swapped wholesale.
+- Prefer sounds you can actually redistribute (your own, CC0, or the original
+  game's own bank when the user supplies the game), and say plainly in the README
+  which clips are third-party and under what terms.
+- Don't treat "it's a free mod" as a licence; free-to-download is not
+  free-to-redistribute.
+
+## When the "source" isn't portable: rewrite against its data model
+
+Mr. Boom's modern source is 533 KB of **machine-translated 16-bit DOS assembly**
+(asm2c), a 22.8 MB embedded memory image with segment selectors and an emulated
+x86 flag register — tens of megabytes of RAM against the 32X's 256 KiB. Porting it
+as code was impossible; porting it as *design* would have lost the feel. The 32X
+version instead **rebuilds the code against the original's data model**: one
+global `struct Mem` keeping the original's fields, French names and numeric bands
+(`truc`, `truc2`, `donnee`, `liste_bombe`, the bonus bag and its cursor), helpers
+transcribed value for value (`framesToCrossACell()`, `bonusInCell()`), and the
+bot's original four-state priority. Fidelity lives in the data and the rules, so
+it survives a total code rewrite.
+
+Getting assets out of such a source: the original sprite sheet was a page of the
+embedded DOS heap, pulled out with a small documented extractor; screen geometry
+was **measured off the author's own published captures**, not guessed; facing
+direction was established by measuring where the eye pixels sit, not by eye.
+
+## Units: re-express every duration and speed for the new tick rate
+
+Several of these ports shipped bugs that were really unit errors:
+
+- **Tick-rate changes**: Mr. Boom's bomb fuse is 256 of the original's ticks; the
+  DOS build ran its logic much faster than 60 Hz, so taken literally at 60 Hz the
+  fuse was **4.3 s** and players felt stuck. Re-express it in the new rate
+  (`BOMB_FUSE_FRAMES = 150`, 2.5 s).
+- **Fixed-point scale mismatches**: WipEout's missiles launched at 2,400 units/tick
+  but homing used an unscaled 150, so a tracking missile slowed to a crawl and CPU
+  ships (600–680) outran it.
+- **Integer width**: City Carnage's attract bot never fired once, because
+  `g_rand()` returns `uint16_t` and `(r >> 16) % 100` is always 0.
+- **Sub-unit motion**: rounding the original's per-frame speed to whole pixels
+  collapsed every speed below the base rate to 1 px/frame, so the slow disease did
+  nothing; carry the fraction in the original's own sub-cell accumulator (8.8).
+
+When porting, list every constant with a unit (ticks, frames, units/tick, Q-format)
+and convert each one deliberately; grep for shifts and modulos on narrow types.
+
+## IP routes that don't copy the original's code or assets
+
+Two more shipped patterns, both with original names and assets:
+
+- **Reimplement documented structures, ship your own game.** Blade Arena: Kengeki
+  is modelled on the game structures that a **static-recompilation project**
+  documents for Battle Arena Toshinden (player records and their offsets, the
+  45-entry action table, the command matcher and its desperation gate, the
+  ordering-table submit) — the recomp repository itself contains no game code. A
+  `tsd_symbols.h` maps each original address/structure to the new code. Name,
+  cast, models, animation, music and sound are all original and generated in the
+  tree; the README states it is unaffiliated and contains no original code or
+  assets.
+- **Clean-room reimplementation of a design.** City Carnage re-derives GTA 1's
+  design from Carnage3D (an open reimplementation that itself loads the retail data
+  at run time and ships none); its cartridge carries **no GTA or Carnage3D assets**
+  — everything is generated by the repo — with a mapping table and feature
+  scorecard in `docs/REVERSE_ENGINEERING.md`.
+
+And when the data *is* the original's (Fight For Life's models, motion capture and
+music come from the user's own copy of the Jaguar source archive), say so in a
+`THIRD_PARTY_NOTICES.md`, don't redistribute the archive, label the result an
+**unofficial fan port**, and remove marks that imply endorsement — that port took
+the console maker's logo off its title screen and put the original author first in
+its credits. Record any **allowed reductions** explicitly (both fighters document a
+"up to 40%" reduction brief and what was reduced).
+
+## Converting another engine's maths conventions
+
+Port the conventions, not just the numbers:
+
+- **Matrix layout and axes.** The Jaguar fighter multiplies *row* vectors
+  (`p' = p·M`) in (X, Z, Y) order with a parent-chain `M_k ← M_k · M_parent`.
+  Converted to Y-up column vectors, bone k's local rotation is the transposed,
+  axis-swapped `R_k[i][j] = m[s(j)][s(i)]` and `W_k = W_parent · R_k`. Using the
+  matrices as absolute rows produced hunched, crouching fighters.
+- **Winding.** Re-wind faces outward in the extractor before enabling back-face
+  culling.
+- **One mesh revision everywhere.** Fight For Life's loader returned a different
+  revision of the boss meshes on its first call than on later ones, so foot heights
+  were measured on an old mesh and the bosses floated 15–20 px above the floor. A
+  `make modelcheck` now requires every model to load the same revision every time
+  and every fighter's lowest vertex to sit on the floor.
+
+## Root motion and changing heading
+
+A fighter's world position is its motion's **base point plus the frame's root
+offset rotated by the heading**. Re-facing the opponent *mid-motion* (when fighters
+cross in a jump) rotates the whole offset around the base point — a "teleport" of
+up to ~1,500 units, so jump-ins never connected. Fix it where the heading changes:
+`set_heading()` adjusts the base point so the body stays put. The same file shows
+the companion trick for air attacks: switch to the flying motion **keeping the
+current frame**, because the original's flying motions share the jump's root path
+frame for frame.
+
+## Keep render-only animation out of the simulation
+
+Kengeki layers presentation on top of a deterministic 60 Hz simulation without
+breaking its oracle lock-step: pose mixing that accepts `t < 0` or `t > 256` for
+anticipation and overshoot, additive lean/flail/spin layers, and a per-fighter
+cross-fade from the last *displayed* pose — none of which ever feeds back into the
+simulation. That's what keeps the host oracle and the 32X byte-identical, and KO
+replays reproducible.
