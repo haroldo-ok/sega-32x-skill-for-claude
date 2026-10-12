@@ -71,74 +71,91 @@ mode of a naive 32X port, and defeating it is the whole point.
 ### References (`references/`)
 - **toolchain-and-build.md** — installing Chilly Willy's 32XDK (both
   `sh-elf-gcc` and `m68k-elf-gcc`), exact flags, linker map, ROM header/checksum
-  fix-up, CI; the alternative distro cross-toolchain route; and the **GCC 12.1
-  SH-2 miscompile traps** to code around (12-byte struct returns, 64-bit
-  multiply chains, dropped stores, calls across optimization levels).
+  fix-up, CI; the alternative distro cross-toolchain route; the **GCC 12.1 SH-2
+  miscompile traps** to code around; and the `.sdata` **`@progbits`** vector-copy
+  invariant.
 - **architecture.md** — dual SH-2, the 68000's role, the SDRAM budget, VDP
-  framebuffer & palette, the COMM mailbox (**with slot-allocation discipline**),
-  the memory-coherency rules (uncached framebuffer vs. cached SDRAM; disjoint-row
-  slave work), **battery-backed cartridge SRAM saves** (versioned checksum +
-  two-phase commit + pixel-compare restore test), the **ROM-size / cartridge-
-  banking / 32X-CD decision** for oversized content, and the SH-2 `long`
-  is 32-bit trap.
+  framebuffer & palette, the COMM mailbox (with slot-allocation discipline), cache
+  coherency in two-CPU work, and:
+  - **how the 32X layer composites over the Mega Drive** — `CRAM bit 15 XOR PRI`
+    over real Genesis pixels, the backdrop never showing through — reconciling three
+    ports' conflicting claims against PicoDrive's compositor;
+  - a **hybrid renderer** (Genesis tilemaps/sprites driven by the 68000 from an
+    SH-2 display list, 32X overlay on top) and its sprite-tearing and
+    contiguous-tile rules;
+  - **SSF bank switching** (park both SH-2s, RV, `0xA130F1`), a boot-time page
+    self-test, and why **a bank switch must never pull ROM from under running
+    code**;
+  - **battery saves**: versioned two-phase-commit format, plus what makes them
+    persist on a real SSF cart and a **Mega EverDrive** (`$300001`/`SRM3M`, page 31,
+    the X-series upper half);
+  - the **boot-BIOS `.data` underflow**, framebuffer facts (zero-byte writes, VDP
+    auto-fill), 68000-side gotchas, and choosing a logic rate vs. render rate.
 - **porting-workflow.md** — the core/shell split, the verified-milestone rhythm,
-  desktop-oracle bring-up, build-time **asset conversion** (incl.
-  reverse-engineering proprietary containers: LZSS/offset tables, LCF, TMX,
-  autotile→dedup atlas), the **"don't port the interpreter — compile content to
-  bytecode + a tiny VM"** archetype scaling up to a **full JRPG** (event VM,
-  turn-based battle, party/menu) and to **large ports** (audit scope first,
-  per-scene palettes, banked map directories), data-driven engines + level-event
-  interpreters, and the **open-source IP model** (GPL vs. game-data licences;
-  CC-BY-NC, CC0, BSD-2, CC-BY-NC-SA, user-supplied data, freeware→from-scratch;
-  mocap/asset provenance).
+  desktop-oracle bring-up, build-time **asset conversion** (LZSS/offset tables,
+  LCF, TMX, autotile→dedup atlas), the **"compile content to bytecode + a tiny VM"**
+  archetype up to a full JRPG and large audited ports, data-driven engines, and:
+  porting from a **binary-only `.EXE`** via a written spec; **rewriting a
+  machine-translated source against its data model**; re-expressing **units**
+  (tick rates, fixed-point scales, integer widths); converting another engine's
+  **matrix/axis conventions**; root-motion "teleports"; and the **IP model** —
+  GPL vs. game-data licences, CC/BSD/freeware cases, user-supplied data, original
+  games built on a recomp's *documented structures*, clean-room design
+  reimplementation, fan-port labelling, and keeping third-party sound packs
+  replaceable.
 - **software-3d.md** — a full fixed-point software-3D pipeline (transform,
-  perspective projection, flat-triangle rasterizer, painter sort + backface, no
-  z-buffer), wireframe/vector and Mode-7/pseudo-3D-road modes, a **first-person
-  raycaster** (quarter-res cast + 2×2 expand, per-column DDA, depth-sorted
-  billboards, **shade-bank palette fog**), skeletal/keyframe character animation,
-  and **pseudo-3D from pre-baked sprite angles / sprite-stacking**.
-- **strategy-and-grid.md** — top-down RTS/tactics and grid crawlers: host-tested
-  **A\*** pathfinding, three-state **fog of war**, the deterministic-grid-logic-
-  with-interpolated-rendering pattern, RTS AI/economy/construction, and turn-based
-  grid rules.
+  projection, flat-triangle rasterizer, painter sort + backface, no z-buffer),
+  wireframe/vector and Mode-7 modes, filled vector webs, a **first-person
+  raycaster** in several shipped budgets with **shade-bank fog**, skeletal and
+  box-skeleton fighters, a PSX-style ordering-table renderer, **pseudo-3D from
+  baked sprite angles / sprite-stacking**, an **extruded top-down "fake 3D" city**,
+  and camera smoothing (C¹ track slope, spring-damped and jump-aware cameras).
+- **strategy-and-grid.md** — RTS/tactics and grid crawlers: host-tested **A\***,
+  three-state **fog of war**, deterministic grid logic with interpolated rendering,
+  RTS AI/economy, turn-based pad conventions, and **lattice arenas that are
+  connected by construction** (proven over seeds).
 - **voxel-landscape.md** — Comanche-style scrolling voxel terrain: cell-billboard
   vs per-column-raycaster methods, camera-above-near-plane projection with a
   per-slice hoisted divide, the compute-vs-fillrate trade, and the
   into-the-screen projectile/enemy/lock-on model.
-- **2d-and-shmup.md** — 2D sprite games: scanline shape fills
-  (triangle/circle/polygon), menu/flow state machines, faithful-graphics
-  reconstruction from a source's draw code, and event-driven sound.
+- **2d-and-shmup.md** — 2D sprite games: scanline shape fills, menu/flow state
+  machines, faithful-graphics reconstruction from a source's draw code,
+  event-driven sound, indexed-mode transparency and zoom, split-screen, and sprite
+  animation details that read as bugs when wrong.
 - **pico8-porting.md** — the recurring PICO-8 → 32X pattern: a `pico8_api` compat
   layer (16-colour palette → CRAM, `sspr`/`pal`/`print`, `btn`, `atan2`/angle
   conventions), fixed-point sprite stepping, and 160×112 → 320×224 doubling.
-- **audio.md** — the PWM stereo FIFO and a software voice mixer; an **8-voice
-  S3M-style tracker mixer** with priority SFX; **streaming BGM as IMA-ADPCM on the
-  slave SH-2** mixed concurrently with PCM SFX (a cross-core COMM command protocol
-  with sequence-number edge detection and RM2K loop/fade/memorize semantics); the
-  **Genesis-side XGM/SGDK** route (YM2612 + PSG driven by the 68000/Z80 with the
-  UI on the SH-2 over COMM); a **MIDI→VGM pipeline** that turns a game's MIDI score
-  into YM2612/PSG/DAC music (per-part FM/PSG routing, the ~1.5 ms FM retrigger gap,
-  offline-pre-mixed DAC percussion, verify against a cycle-accurate core); a
-  **"which music path?"** decision (streaming ADPCM vs MIDI→VGM); the
-  FIFO-starvation gotcha; and how to actually verify audio.
-- **optimization.md** — SH-2 patterns: fixed-point, table lookups, the
-  reciprocal-table divide, divide-hoisting, **killing hidden 64-bit `__divdi3`**,
-  scanline depth LUTs, 32-bit-aligned framebuffer writes, dirty-rectangle
-  rendering, the **60/n vblank-quantization** model, the **`make headroom`
-  continuous perf metric** (and validating your instrument), staged dual-core
-  offload, and how to measure effective framerate through the video harness.
-- **testing.md** — building the PicoDrive libretro core, the harness + input
-  script format, black-screen/playability assertions, static ROM verification,
-  the harness gotchas, the **rebuild-from-a-known-good-tree** fix, the
-  **deterministic desktop-oracle** method (incl. diffing against the original's
-  *own* code), **liveness beacons on three channels** (COMM regs / SDRAM struct /
-  MD work RAM) for exact-state assertions, an **in-ROM verification accelerator**
-  and **debug warps** for long content, **heartbeat + interpreter-state
-  hang diagnosis** (crashed CPU vs. logic deadlock), a **catalog of
-  "verifies-clean-but-boots-black"** causes, and the shared-math/one-function
-  testing principle. Includes audio verification via PCM capture.
-- **examples.md** — a catalogue of real, shipped 32X ports to learn from,
-  grouped by rendering technique, port source, and audio.
+- **audio.md** — PWM basics and a software voice mixer, and four music routes with
+  a "which path?" decision: an 8-voice tracker / **ProTracker MOD player** (ticked
+  at 50 Hz, not the NTSC vblank), **streaming IMA-ADPCM** on the slave (with a
+  sequence-numbered COMM protocol and loop/fade/memorize), **Genesis-side
+  XGM/SGDK**, and a **MIDI→VGM** pipeline. Plus the **real-hardware PWM recipe —
+  slave DMA from ping-pong buffers** (interrupt-per-sample was silent on a real
+  32X), a polled single-voice player, mixing at the source's native rate, the
+  **66-second song-clock overflow**, a beam-search **ADPCM encoder** that fitted
+  2 MiB of radio into half the space, fully synthesised original music, and audio
+  assertions (never silent, no DC offset, exactly silent when off, no clipping).
+- **optimization.md** — SH-2 patterns: fixed-point, tables, reciprocal divides,
+  divide-hoisting, killing hidden `__divdi3`, **arithmetic shifts that compile to
+  libgcc calls** (no barrel shifter), convex/Gouraud-run rasterising, a
+  **longword transparent blitter**, dirty rectangles, the **60/n vblank** model and
+  the **deferred flip**, a **frame-time governor** with hysteresis, **splitting a
+  frame across both SH-2s** (adaptive bands, lock-free work stealing), code in
+  SDRAM, the `make headroom` probe, and **profiling** — a PicoDrive cycle-per-PC
+  profiler, profile-by-subtraction builds, and the emulator's blind spots (no
+  cache, wait-state, RV-contention or free-running-timer model).
+- **testing.md** — the PicoDrive harness and script DSL, black-screen/playability
+  assertions, static ROM verification, the black-screen ladder and a catalog of
+  "verifies-clean-but-boots-black" causes, **boot-stage markers**, liveness
+  beacons, telemetry asserts and wait-until-state, **harness audio capture**,
+  semantic checks (palette identity, frozen pause), the verification accelerator
+  and debug/cheat builds, the deterministic oracle, **generated test scripts
+  validated by a model**, **building and testing with no proprietary data**,
+  **colour-coded hardware probe ROMs**, **checks proven against the bug they
+  guard**, exhaustive host sweeps and invariant detectors, and reproducible builds.
+- **examples.md** — a catalogue of real 32X ports to learn from, grouped by
+  rendering technique, port source and audio, including full-source workspaces
+  studied in depth.
 
 ### Assets (`assets/`) — ready to adapt
 - **3d/** — a reusable clean-room software-3D engine (`r3d.c`, `r3d.h`) with
@@ -181,7 +198,9 @@ emulator point-to-point check, and is packaged before moving on.
 | First-person raycaster | ✅ technique (quarter-res + 2×2 expand, shade-bank fog) |
 | Voxel landscape (Comanche-style) | ✅ technique (cell-billboard + raycaster) |
 | Mode-7 / pseudo-3D roads | ✅ technique (scanline depth LUT, scaled sprites) |
-| Pseudo-3D from sprites | ✅ technique (baked view angles, sprite-stacking) |
+| Pseudo-3D from sprites | ✅ technique (baked view angles, sprite-stacking, mirrored halves) |
+| Extruded top-down "fake 3D" | ✅ technique (vanishing-point roofs, edge-inward order) |
+| Hybrid Mega Drive VDP + 32X overlay | ✅ technique (68000 display list; emulator-verified) |
 | Wireframe / vector | ✅ technique (line rasterizer) |
 | 3D fighting / skeletal animation | ✅ technique (keyframe interpolation, mocap bake) |
 | RTS / tactics / grid crawler | ✅ A*, fog of war, deterministic-grid + interp |
@@ -190,19 +209,27 @@ emulator point-to-point check, and is packaged before moving on.
 | Full JRPG (maps, battles, party) | ✅ event VM + turn-based battle + menu/party |
 | Indexed alpha / zoom overlays | ✅ stipple/blend-LUT transparency + fixed-point scale |
 | Large-scope content ports | ✅ audit-first scoping + ROM banking / 32X-CD plan |
-| Dual-core (2nd SH-2) | ✅ COMM job dispatcher; frame-clear/sky/audio offload |
+| Dual-core (2nd SH-2) | ✅ COMM jobs, adaptive row bands, lock-free work stealing |
 | PWM audio + mixer | ✅ technique + verification method |
+| Real-hardware PWM | ✅ slave DMA ping-pong (IRQ-per-sample flagged as emulator-only) |
+| ProTracker MOD playback | ✅ on-slave player, 50 Hz tick, soft-knee mix |
 | 8-voice tracker (S3M) audio | ✅ technique (software mixer → stereo PWM FIFO) |
 | Compressed samples (IMA ADPCM) | ✅ technique (decode + mix on slave SH-2) |
 | Streaming BGM (ADPCM from ROM) | ✅ slave decoder + SFX mix, COMM protocol |
 | Genesis-side music (XGM/SGDK) | ✅ technique (YM2612/PSG via 68000+Z80, SH-2 UI) |
 | MIDI → VGM music generation | ✅ build-time MIDI→YM2612/PSG/DAC pipeline |
 | Battery-backed SRAM saves | ✅ versioned checksum + two-phase commit + test |
+| Saves on real flash carts | ✅ SSF save window, EverDrive Pro/X page 31, `SRM3M` |
+| ROMs past 4 MiB (SSF banking) | ✅ park-the-SH-2s protocol + boot-time page self-test |
 | Split-screen 2-player | ✅ technique (per-view camera/HUD, clipped) |
 | Porting (DOS/JS/PICO-8/RE) | ✅ core/shell split, asset pipeline, IP model |
 | Optimization | ✅ fixed-point, tables, reciprocal divide, aligned writes |
 | Framerate / headroom measurement | ✅ frame-counter read + continuous ballast probe |
-| Automated testing | ✅ static ROM checks + headless PicoDrive |
+| Frame pacing under load | ✅ deferred flip + frame-time governor with hysteresis |
+| Cycle profiling | ✅ PicoDrive interpreter cycle-per-PC histogram |
+| Automated testing | ✅ static ROM checks + headless PicoDrive + audio capture |
+| Questions only hardware can answer | ✅ colour-coded probe ROMs |
+| CI without proprietary game data | ✅ placeholder assets + synthetic converter self-test |
 | Hang vs. black-screen diagnosis | ✅ heartbeat + interpreter-state overlay |
 | Deterministic oracle testing | ✅ record/replay + diff vs the original's own code |
 
@@ -228,8 +255,12 @@ actually using it and by studying a large body of shipped 32X ports:
   - **Mode-7 racer** (a PICO-8 port) — the `pico8_api` compat layer, scanline
     depth LUTs, fixed-point sprite stepping, 32-bit-aligned framebuffer writes,
     attract/demo mode.
-  - **Vector tube shooter** (Tempest-style) — 16 3D webs, translucent lane
-    polys, dual-SH2 with the slave running a real-time PWM synth + techno loop.
+  - **Tempest 2000** (Jeff Minter / Llamasoft, Jaguar) — grew from a vector
+    tube prototype into a full reimplementation tested on real hardware: level
+    data extracted verbatim from the annotated Jaguar source, **SSF banking** with
+    a boot-time page self-test (4 MiB and 8 MiB builds), an on-SH-2 ProTracker
+    player — and the discovery that **interrupt-per-sample PWM was silent on a real
+    32X**, fixed with the d32xr **slave-DMA** scheme.
   - **3D fighting games** (PICO-8 and DirectX sources) — a free 3D arena,
     keyframe-interpolated skeletal animation, per-body-part colour customization,
     mocap-baked poses with third-party provenance notices.
@@ -291,11 +322,49 @@ actually using it and by studying a large body of shipped 32X ports:
     transparency** (no blitter or hardware alpha — stipple/blend-LUT + fixed-point
     scaling), all 30 maps, front-view battles, a field menu, 27 PWM SFX, and an
     exemplary honest **Known gaps** list.
+  - **Tux Racer** (a work-in-progress port) — its value is the test harness:
+    instrumented builds on separate ROM names after a benchmark ROM shipped in the
+    release slot, game-mode telemetry with transition asserts, and scene-content
+    checks.
+  - **Three DOS/J2ME ports** — **Alien Assault II** (translated from its freeware
+    source: COMM boot-stage markers, harness audio capture, byte-identical pause
+    checks), **Pacamaze** (reverse-engineered from the `.EXE` into a written spec,
+    then a pixel-exact raycaster), and **Doom RPG** (a clean-room engine over the
+    user's own `.jar`, with placeholder assets so it builds and tests with no
+    proprietary data, and test scripts generated from the maps and checked against
+    a Python model).
 
-Several of these ports (the circuit racer, the jet-ski racer, the RTS, the
-Arkanoid/Tyrian lineage, both RPGs) explicitly credit `sega-32x-skill-for-claude`
-as their workflow — the skill is in real, repeated use, and its guidance is fed
-back from what that use uncovers.
+- **Five full-source workspaces studied in depth** (each bundles this skill as its
+  workflow), contributing the most real-hardware findings so far:
+  - **WipEout** (anti-gravity racer) — the **boot BIOS wipes SDRAM if a ROM has
+    no initialised data**; C¹-continuous track slopes and a spring-damped camera.
+  - **Mr. Boom** (8-player Bomberman) — a **hybrid renderer** that draws the world
+    with the Genesis VDP and only the HUD on the 32X; contiguous sprite tiles,
+    sprite tearing, a source rebuilt against its original data model, and arenas
+    proven connected over seeds.
+  - **Fight For Life** (Jaguar 3D fighter, 6 → 20 fps) — **SH-2 shifts compile to
+    library calls** (9 → 12 fps from that alone), lock-free work stealing across
+    both SH-2s, VDP auto-fill, slave-DMA audio at the Jaguar DSP rate, and a
+    **song clock that froze the music at 66 s**.
+  - **City Carnage** (a clean-room GTA-style sandbox) — an extruded fake-3D city,
+    saves that worked only in emulators until moved off the SSF ROM windows and
+    onto **EverDrive page 31**, a silent boot caused by bank-switching under
+    running code, a beam-search ADPCM encoder that saved 2 MiB, a frame-time
+    governor, and **colour-coded probe ROMs** for questions only hardware can
+    answer.
+  - **Blade Arena: Kengeki** (an original fighter built on the structures a
+    Toshinden recompilation documents) — adaptive two-CPU banded rasterisation
+    proven pixel-identical, the deferred flip, a PicoDrive cycle profiler, and a
+    fully synthesised original soundtrack.
+
+  Studying them also corrected the skill itself in three places: its
+  "set CRAM bit 15 or the frame is invisible" rule (now the precise
+  `bit 15 XOR PRI` compositing rule, checked against PicoDrive's compositor),
+  its advice to feed PWM from a timer, and its ProTracker tempo note.
+
+Most of these ports explicitly credit `sega-32x-skill-for-claude` as their
+workflow — the skill is in real, repeated use, and its guidance is fed back from
+what that use uncovers.
 
 The skill also folds in a build-time **tool**, not just games: **midi2vgm**, a
 MIDI → VGM (YM2612/PSG/DAC) converter that makes a game's MIDI score playable on
@@ -333,6 +402,15 @@ lifted from a working, shipped 32X ROM — and cited.
   across mixed optimization levels). The skill lists them and writes around them
   (pointer math, MAC macros, one optimization level) rather than being surprised
   by a "correct" program that misbehaves only on hardware.
+- **The emulator is not the console.** PicoDrive models neither the SH-2 cache,
+  SDRAM wait states, RV bus contention, nor the 32X free-running timer, and real
+  ports have shipped bugs that only hardware showed: interrupt-driven audio that
+  was silent, a random silent boot from a bank switch, saves that never persisted.
+  The skill marks which lessons were hardware-confirmed and which are
+  emulator-verified only. One question stays open on hardware: whether Genesis
+  graphics can show *under* the 32X layer (one port relies on it in PicoDrive,
+  another's hardware probe was inconclusive). The skill says how to settle such a
+  question with a colour-coded probe ROM rather than guessing.
 - **Claims match what was verified.** Video tests confirm visuals; audio is only
   called "confirmed" when a PCM-capture test actually ran, otherwise it's
   "wired." The skill is careful not to overclaim.

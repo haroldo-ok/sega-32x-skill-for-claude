@@ -224,3 +224,94 @@ You can fake 3D models without a rasterizer by **pre-baking sprites**:
   `dmar` collection). Cheap, distinctive, no 3D math.
 
 Both keep the "3D" cost at blit-a-scaled-sprite, leaving the SH-2 for gameplay.
+
+### Two more raycaster budgets that shipped
+
+The quarter-res cast above isn't the only workable budget:
+
+- **Doom RPG (turn-based, so frame rate is forgiving)**: a **160×72** indexed
+  frame from a fixed-point DDA, **scaled 2× to a 320×144 viewport**; walls, floors
+  and ceilings are emitted as **deferred textured spans that all share one
+  8-level shade LUT**, so distance shading costs one table lookup per texel. 64×64
+  wall textures, per-cell 32×32 floor/ceiling textures, masked sprites, animated
+  doors.
+- **Pacamaze (faithful to a DOS original)**: **256 rays** with the DOS-identical
+  distance/shade maths, a **reciprocal-table floor projection** sampling 128
+  texels per row and doubling to 2 px, billboard sprites, a 320×200 window centred
+  in the 320×224 framebuffer. It runs at ~12–16 fps on the SH-2s, tuned with
+  pointer stores, a **floor texel-run cache** and division tables — **without
+  changing a single output pixel**, guarded by reference-image tests (see
+  `testing.md`). When fidelity to the original's look is the goal, optimise under
+  a pixel-exact test rather than approximating.
+
+### Filled vector webs (Tempest)
+
+A tube shooter's playfield is a ring of lanes: draw each lane as a **filled,
+depth-shaded quad** (≈40 per frame plus objects in a shipped Tempest 2000 port),
+light the player's lane, and use the original's per-lane orientation table for
+objects. It ran at 30 fps render / 60 Hz logic; the documented next steps are
+moving the web fill to the slave SH-2 on **disjoint scanline rows** and caching
+the rim/far projections per frame — the same disjoint-rows split as
+`architecture.md`.
+
+## Extruded top-down "fake 3D" (a GTA-style city)
+
+City Carnage draws a top-down city whose blocks stand up as prisms, with no depth
+buffer, at 20 fps (30 with 3D off):
+
+- **Roof = the ground footprint scaled about the vanishing point**, by
+  `k = 1 + h / EYE_H` for a block of height `h`; **walls** are the trapezoids swept
+  by the footprint's edges, textured from a per-family wall tile.
+- **Depth order for free**: under this projection, looping each screen quadrant
+  **from the screen edges inwards** toward the vanishing point is a valid painter's
+  order — no sort, no z-buffer.
+- **Heights cost no ROM**: storey counts ride in two spare bits (6–7) of the map's
+  tile byte.
+- Because a roof always contains its scaled-down footprint, **don't draw ground
+  under buildings** when extrusion is on — it was a quarter of the map pass.
+- The camera is quantised to **4 px** so every tile-row copy is a longword store,
+  which is what makes a full-screen scroll affordable.
+
+Its frame-time governor (see `optimization.md`) degrades this extrusion in steps —
+no far walls, half-resolution wall bands, shorter near walls — rather than
+removing any block or roof.
+
+## A PSX-style fighter renderer (Kengeki)
+
+- **Depth buckets like a PlayStation ordering table**: 512 buckets × 32 units;
+  the arena floor and walls are an unsorted list drawn first, then shadows,
+  fighters, projectiles and sparks through the buckets.
+- **Guard-band clipping** in screen space plus near-plane clipping in camera space.
+- **Box-skeleton fighters**: 21–26 boxes (126–156 quads, about half back-face
+  culled) per fighter, lit in bone space with the light vector transformed once per
+  bone.
+- Vertices in **Q4 sub-pixel**, edges as Q16 x per scanline stepped with one add.
+
+## Cameras that don't fight the player
+
+Camera feel recurred as a fix in three ports:
+
+- **Smooth the input the camera follows.** WipEout derived pitch from the current
+  track section's slope, a step function that jumped 5–15° at every section seam.
+  Blending each seam's slope with its neighbours and interpolating across the
+  section gives a **C¹-continuous** slope: no angular jumps.
+- **Spring-damp the chase camera** instead of locking it to the ship: ease position
+  (`pos += (target - pos) >> 2`) and pitch (`>> 3`), clamp the downhill pitch, keep
+  roll level, and blend the upcoming track heading into the yaw.
+- **Frame the whole action.** Fight For Life's camera, while a fighter is airborne,
+  backs off by 1.5× the jump height, rises and freezes its yaw so the view doesn't
+  swing as fighters cross; afterwards a settle phase turns at most **2.8° per tick**
+  with an accelerating, capped yaw velocity, and distance eases back at 1/16 per
+  tick. Before, the first post-landing tick could swing 30°.
+
+## Smaller lessons from the 3D ports
+
+- **Clip buffers need more than 8 vertices** — clipping a quad against several
+  planes adds a vertex per plane crossed.
+- **Affine floor grids**: transform 3 corners and step, so each grid vertex is
+  projected once (Fight For Life: floor 33 → 25 ms).
+- **Decimate models offline with constraints**: quadric-error decimation to ~60% of
+  the quads, protecting colour borders, open borders, attachment points and each
+  axis's extreme points, so feet still meet the floor and parts don't open up.
+  Flat-shade with a few light levels per colour when texture mapping isn't
+  affordable at that polygon count.

@@ -32,7 +32,8 @@ or a render phase to the slave is the single biggest 32X speedup.
   `__attribute__((section(".sdata"), aligned(16), optimize("O1")))`).
 - **ROM banking (SSF/SEGA mapper)**: for ROMs past the direct window, page ROM
   banks in with `Mars_SetBankPage`. Choose the mapper in the ROM header
-  (`SEGA 32X` vs `SEGA SSF`).
+  (`SEGA 32X` vs `SEGA SSF`). The switch is a **cross-CPU protocol, not a
+  register poke** — see "SSF bank switching" below.
 
 ## Video: the 32X VDP framebuffer
 
@@ -260,3 +261,232 @@ misread), checksum it, and write with a **two-phase commit** — write the new s
 to a spare slot, verify it, then flip an active-slot marker — so a power-loss
 mid-write can never corrupt the only good save. Validate on boot before offering
 Continue; a bad save fails safe to "no save."
+
+## SSF bank switching: park the SH-2s, then switch
+
+Past the ~4 MiB window, an **SSF mapper** ROM (`SEGA SSF` at header `0x100`)
+splits the cartridge into **512 KiB pages**. Page 0 is the fixed window (header,
+68000 program at `0x800`, SH-2 code + rodata, the `.data` image); pages 1…N are
+the banked asset area. A shipped Tempest 2000 port (4 MiB and 8 MiB builds) uses
+the same protocol as d32xr/32XDK — the one **real carts need**, because **the
+SH-2s must be off the cartridge bus while the mapper latch changes**:
+
+1. The SH-2 calls `Hw_SetBankPage(bank, page)`, which posts a command word
+   (`0x16xx`) in COMM0.
+2. The **68000 raises the CMD interrupt on both SH-2s**; each parks in a spin loop
+   **running from SDRAM** and acknowledges (`0xA55A` on COMM0/COMM4).
+3. The 68000 sets **RV**, writes the page to the mapper register
+   **`0xA130F1 + bank*2`**, clears RV, and writes `0xFFFE` to release.
+4. The SH-2s resume. Battery-SRAM reads/writes use the **identical park/RV
+   sequence** (different command words).
+
+Make it observable: **self-test every page at boot.** The ROM builder plants a
+tag at the end of each page; at boot the game switches every page into a bank,
+reads the tag back, and prints the result on the title (`SSF BANKS 07/07` /
+`15/15` in green). A wrong mapper header, a bad page order in the image, or a
+broken park protocol then shows up on the first screen instead of as corrupted
+music twenty minutes in.
+
+**Design for both sizes.** Tempest ships a 4 MiB build (only the title tune fits;
+synth SFX fallback) and an 8 MiB build (full soundtrack + sample bank). Have the
+asset loader degrade gracefully when an asset isn't present rather than assuming
+the big build — then the ROM-size decision (above) is a build flag, not a fork.
+
+## 68000-side gotchas that hide as "the pad doesn't work" or "nothing draws"
+
+- **Set port A's TH bit (`0xA10009`)** in the 68000 init. Without it the pad
+  never answers the TH-toggling (6-button) read protocol in PicoDrive, and input
+  looks dead (Alien Assault II port).
+- **The adapter FM bit (`0xA15100` bit 15) must be set before the SH-2 touches
+  the VDP or CRAM** — PicoDrive **silently drops** VDP/palette writes from the
+  SH-2 until it is. Pairs with the "grant FM before the handshake" deadlock in
+  the black-screen catalog (`testing.md`).
+- **Run the 68000 service loop from work RAM** and hold the **Z80 in reset** if
+  you don't use YM2612/PSG — fewer agents on the cart bus (see `audio.md`).
+
+## Logic rate vs render rate: decide it, don't inherit it
+
+Shipped ports split the two deliberately rather than letting the renderer set
+the game speed:
+
+- **Fixed logic tick with catch-up** — Tempest keeps logic at **60 Hz** while
+  rendering at 30 fps, running extra ticks when a frame is late.
+- **Original tick model, vblank-normalised** — Pacamaze keeps the DOS **70 Hz**
+  tick model and advances it by elapsed vblanks, so game speed is correct at any
+  render rate (~12–16 fps).
+- **Fewer, heavier ticks** — Alien Assault II runs combat at a steady **3 frames
+  per tick (~20 Hz)**, deterministic across runs, after moving the framebuffer
+  flip inside vblank so menus hold one tick per frame.
+
+All three keep the simulation deterministic per tick; pick by how sensitive the
+original's feel is to tick rate, and **measure** the frames-per-tick (as
+`optimization.md` describes) rather than assuming it.
+
+## Compositing the 32X layer over the Mega Drive
+
+The 32X image is laid over the Mega Drive's, pixel by pixel. Three shipped ports
+made three different-sounding claims about how, and PicoDrive's compositor
+(`pico/32x/draw.c`, packed-pixel path) reconciles them:
+
+1. **Wherever the Mega Drive pixel is the backdrop colour, the 32X pixel is drawn
+   — whatever its CRAM entry says.** The Genesis *backdrop* never shows through
+   palette index 0.
+2. **Wherever the Mega Drive draws a real plane or sprite pixel**, the 32X pixel
+   wins only if **`(CRAM bit 15) XOR (DISPMODE PRI bit, 0x0080)`** is set;
+   otherwise the Mega Drive pixel shows.
+
+What the three ports saw, read through that rule:
+
+- **City Carnage** packs its palette with bit 15 clear on every entry and sets
+  `MARS_VDP_PRIO_32X`; over a blank Mega Drive plane rule 1 applies and the game
+  displays normally. Its first hardware probe (HUD strip = index 0 over a **green
+  backdrop**) came back black on hardware *and* in PicoDrive — exactly what rule 1
+  predicts, so it showed the backdrop can't be used, not that compositing is
+  impossible. Its second probe (magenta tiles on plane A, PRI toggled every 2 s)
+  reportedly stayed black in both modes; that contradicts rule 2 if plane A was
+  really being displayed, and it appears to have been judged in PicoDrive only —
+  suspect the Mega Drive plane setup before the hardware.
+- **WipEout** sets bit 15 on every entry *and* PRI; over a blank plane rule 1 again
+  makes it visible. Its README credits bit 15 for that, which only matters if the
+  Mega Drive is drawing non-backdrop junk (e.g. uninitialised VRAM).
+- **Mr. Boom** ships index 0 with bit 15 **clear** and the rest set, so index 0
+  becomes the window through which its Mega Drive tilemaps and sprites show (rule
+  2). That is verified in PicoDrive; it has not been reported on hardware.
+
+**Practical rule:** decide per entry. For a 32X-only game, initialise the Mega
+Drive planes to blank and any consistent bit-15/PRI choice works. To show Mega
+Drive graphics *under* the 32X, they must be real plane/sprite pixels (not the
+backdrop) and the transparent entries need `bit15 XOR PRI = 0`. Prove it on
+hardware with a colour-coded probe ROM that varies **both** bit 15 on index 0 and
+PRI (see `testing.md`) before building on it. A hard alternative that needs no
+compositing: switch the 32X display **off for some scanlines** from an HBlank
+interrupt (City Carnage's proposed HUD split; not built).
+
+## A hybrid renderer: Mega Drive VDP for the world, 32X for the overlay
+
+The 32X sits *on top of* a working Genesis, and the Genesis VDP is a good 2D chip.
+A shipped Mr. Boom port draws its arena with **Mega Drive tilemaps and hardware
+sprites** and uses the 32X framebuffer only for the HUD, banners and menu panel —
+cutting SH-2 pixel writes from ~16 KiB + changed cells to ~4 KiB per frame at
+60 fps. Both renderers (`RENDERER=md` and `=fb`) run one hardware-free core and are
+tested to agree cell for cell. How it is wired:
+
+- **Only the 68000 can reach the MD VDP; only the SH-2s can reach SDRAM.** The one
+  memory both see is the 32X framebuffer, so each frame the master SH-2 writes a
+  **delta display list** into the framebuffer's **off-screen tail (`+0x18000`)**,
+  hands the framebuffer to the 68000 by **clearing the adapter's FM bit**, and
+  waits for an ack. A steady-state packet is a few dozen cells.
+- **Fetch promptly, apply at VBlank, and never drop a packet.** Applying sprite
+  attribute table writes while the VDP scans out makes Mega Drive sprites
+  **tear**; deferring the apply naïvely lets the next packet overwrite a pending
+  one, losing deltas the SH-2 has already folded into its shadow (the board drifts
+  out of sync). The two-stage handshake that fixes both: `COMM2` SH-2→68000 "packet
+  waiting"; `COMM12` 68000→SH-2 "I still hold an unapplied one — don't build the
+  next". Skipping a build just leaves the MD layer a frame stale.
+- **Mega Drive sprite tiles must be contiguous.** A sprite names one tile and the
+  VDP reads the rest sequentially (column-major). Feeding sprite tiles through the
+  same **dedup pool** as name-table tiles breaks those runs and the VDP draws
+  whatever follows — heads detached from bodies, fragments of neighbours. Dedup
+  whole sprites, never tiles inside one.
+- **Apply a screen offset once.** A vertical offset supplied by plane scroll *and*
+  added to the name-table row shifted the arena by a cell — it looked like
+  different level generation until the boards were diffed cell by cell. Keep
+  offsets a multiple of the 8-px cell.
+- **Still prove it's a 32X cartridge.** A `check_32x.py` asserts distinct master
+  and slave entry points in SDRAM and both SH-2 reset vectors present in the raw
+  ROM, and that the SH-2 side carries the game (the 68000 resident here is ~2 KiB
+  of VDP driver and pad poller).
+
+## Framebuffer facts that cost real debugging time
+
+- **Zero bytes can be silently dropped.** The framebuffer's *overwrite image*
+  (`+0x20000`) ignores writes of byte value 0 by design — that's what makes it
+  useful for transparent sprite blits for free. A Mr. Boom port also found
+  byte-wise clears to index 0 having no effect where it expected them to, leaving a
+  menu panel burned in. **Clear with aligned 32-bit stores through the normal
+  image**, never byte loops.
+- **Pace on the 32X VDP's own VBLK bit.** The Mega Drive VDP status flag is a
+  *level*, not an edge — a loop that polls it ticked ~200× per frame and left a
+  game completely unpaced (City Carnage). Ask the 68000 for exactly one pad sample
+  per frame.
+- **Latch pads into a ring buffer in the VBlank IRQ** (Kengeki: 16 entries) so
+  presses aren't lost when the game renders below 60 fps.
+- **32X VDP auto-fill** draws long single-colour spans in hardware (Fight For Life
+  uses it for floor runs). Its registers are shared: **never let both SH-2s use
+  fill at once, and don't write the framebuffer while a fill runs** — during
+  two-CPU phases, fall back to CPU span loops.
+
+## The boot BIOS copies `.data` — and underflows if there is none
+
+The master SH-2's boot BIOS (offset `0x28C`–`0x2A2`) reads `__data_size` from the
+Mars module header and copies initialised data from ROM to SDRAM with a
+decrement-by-4, compare-with-zero loop. **If `__data_size` is 0** — a program with
+no initialised globals — the first `sub` underflows to `0xFFFFFFFC` and the loop
+runs ~2³⁰ times, overwriting all of SDRAM and the bus registers before your code
+starts. A WipEout port guarantees a non-empty `.data` with a small initialised
+anchor (`g_mars_boot_anchor[4]` = 16 bytes). Cheap insurance for any project;
+`verify_rom.py` can assert `__data_size >= 4`.
+
+## Bank switching must never pull ROM out from under running code
+
+The SSF protocol above parks both SH-2s in SDRAM — but code that is *already
+executing from ROM* elsewhere can still be cut off. City Carnage booted silent at
+random: the slave's ~187 ms PWM start-up ramp ran from ROM and never parked, while
+the master's first `Bank_Set()` waited only ~87 ms before switching, so the slave
+fetched garbage instructions and the mixer never reached its loop. Intermittent
+(depends on where the cores line up at power-on) and **invisible in PicoDrive,
+which does not model RV bus contention.** The fix pattern:
+
+- anything that may run during a switch lives in **SDRAM** (or is parked first);
+- the slave publishes **`slave_alive` before** its ramp, so the master can tell
+  "not booted" from "running, must park";
+- `Bank_Set()` **refuses** to switch out from under a live, unparked core and
+  returns failure instead;
+- **every wait is bounded**, and a **music watchdog** restarts a track that should
+  be playing but isn't, so a transient becomes a hiccup rather than a silent run.
+
+Keep everything a frame needs (sprites, palettes, fonts) in the **fixed page**, so
+no gameplay draw depends on which bank is mapped.
+
+## Battery saves on an SSF cartridge (and on a Mega EverDrive)
+
+City Carnage's saves worked in every emulator and never on hardware, for reasons
+worth knowing before you ship:
+
+- **Under the SSF mapper every bank window is a paged ROM window.** The
+  conventional save address `$200001` is bank 4, so on a real mapper (the
+  EverDrive implements it faithfully) writes there land on ROM and are discarded.
+  Emulators hide this by keeping a separate SRAM buffer keyed off the header. The
+  port moved saves to **`$300001` (bank 6), odd bytes**, left bank 6 deliberately
+  unmapped, and declared `$00300001-$00303FFF` in the header (`$1B4`/`$1B8`), which
+  is what emulators and the flash cart size their save buffer from. On the
+  EverDrive the matching per-ROM setting is **Save Type `SRM3M`**.
+- **On an SSF cart `$A130F1` is the bank-0 page register**, not just an "SRAM
+  enable" latch — careless writes there can remap the page holding the 68000
+  vectors and the SH-2 image (the port's own changelog disagrees with itself about
+  exactly what `$01` does, so keep bank 0's page explicit around it). Yet removing
+  the write broke saving in PicoDrive, which watches it to allocate a save buffer.
+- **EverDrive Pro/X: battery RAM is SSF page 31** — word-wide, 512 KiB on the Pro,
+  **only the upper 256 KiB on the X3/X5/X7** (the lower half is PSRAM and dies with
+  the power). Saves written below `$340001` silently vanished on X-series carts.
+  Register order to map it: write `$A130F0` (CTRL0) with write-protect on, then
+  `$A130FC` (CTRL6) to select page 31, then CTRL0 again with **W=1** (W gates BRAM
+  writes too); keep CTRL0's bank-0 page field at 0.
+- The Pro has **no battery**: BRAM reaches the SD card only when the cart's OS gets
+  control back, so power-cycle into the menu before pulling the card. Its save file
+  is 16-bit wide (data on odd offsets); Krikzz's `16to8`/`8to16` convert to and
+  from emulator layout. **In-game menu and save states don't work with a 32X
+  attached.**
+
+## Cache coherency in two-CPU rendering
+
+The master's SDRAM cache is write-through, so what it writes is in SDRAM — but the
+**slave's cache may still hold stale lines** for those addresses. Before reading a
+job the master posted, the slave purges its cache (Fight For Life: `CCR = 0x11`;
+Kengeki: `CCR = 0`, then `CCR = old | CP`). Both CPUs write the framebuffer only
+through the **cache-through mirror** and only on **disjoint rows**, and the master
+waits for the slave's done flag before drawing the HUD and flipping.
+
+A related trap: when the 68000 writes a 32-bit counter across a COMM pair, the
+lower-numbered register holds the **high word** (big-endian) — Fight For Life read
+`COMM12` expecting a frame counter and got its high half; read `COMM14`.

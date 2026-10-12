@@ -362,3 +362,163 @@ Compact checklist, each measured:
   each via the frame-buffer line table (the VDP doubles for free) — ~40% frame
   slack for lost vertical detail; only worth enabling if it crosses a vblank
   boundary.
+
+## Arithmetic shifts are function calls on the SH-2
+
+The SH-2 has **no barrel shifter**: it shifts by 1, 2, 8 or 16 bits per
+instruction. GCC lowers a signed `>>` by any other constant (and every variable
+shift) to a libgcc helper such as **`___ashiftrt_r4_14`** — so `x >> 14` in a Q14
+matrix multiply is a *call*. Two shipped 3D fighters found this was among their
+largest wins:
+
+- Fight For Life: removing the helpers took combat from **9 to 12 fps**. Its
+  `fmath.h` rewrites shifts as `(x << k) >> 16` (`SR14`, `SR12`, `SR8`), i.e.
+  `shll2` + `shlr16` + `exts.w`, and uses Q16 where `>> 16` is just
+  `swap.w` + `exts.w`.
+- Kengeki: an `ASR()` macro (bias + logical shift) and Q16 edges cut its frame from
+  68 to 52 VBlanks per 10 frames; it ships a `tools/asr_rewrite.py` to apply it.
+  Variable shifts in the back-face test went the same way.
+
+**Guard it:** `sh-elf-nm build/*.o | grep ashiftrt` should print nothing for hot
+code; make it a check. (The same applies to `/6`-style divides by constants that
+should be multiplies.)
+
+## Rasteriser wins that held up across ports
+
+- **One span per row for convex polygons** — don't split quads into triangles
+  (Fight For Life: 7 → 9 fps).
+- **Gouraud as constant-colour runs**: step the shade along the edge, emit runs of
+  one colour filled with 32-bit stores, and **demote** small or near-uniform faces
+  (shade range ≤ 1, or ≤ 4 under ~900 px²) to flat (Kengeki).
+- **Edge slopes from a reciprocal table**: `(int64)n * recip[d] >> 20` compiles to
+  `dmuls.l` + `xtrct` instead of a ~40-cycle `__sdivsi3`. Fight For Life found the
+  divider "was never the bottleneck" and keeps the hardware divide for far points
+  (z ≥ 4096) where precision matters — measure before replacing divides.
+- **Per-primitive setup, not pixel count, was the floor's cost** in Fight For
+  Life: base quad alone 30 fps, rectangles with spans but no pixel writes 20 fps,
+  everything 15 fps. Merging ~140 small floor cells into same-colour rectangles
+  over one base quad fixed it; choose the base colour to minimise error along cell
+  boundaries, because 1-px T-junction cracks show it.
+- **Translucency through 256-byte LUTs** (`shadow`, `glow`) rebuilt when the
+  palette changes — read-modify-write per pixel, no maths (Kengeki).
+- **Skip pixels the geometry is guaranteed to cover**: City Carnage stopped filling
+  ground under building footprints because the extruded roof always covers them —
+  a quarter of its map pass.
+
+### A longword sprite blitter with transparency
+
+City Carnage's `R_DrawSprite()` drew every car and pedestrian a byte at a time
+(~6 cycles/pixel, mostly the transparency branch). It now works a **32-bit word**
+at a time: a zero-byte test builds the which-bytes-are-transparent mask, a fully
+opaque word is one store, a fully transparent one is skipped, and unaligned source
+rows are assembled from two words with one shift. **Big-endian**: byte 0 of a
+longword is its *top* byte on the SH-2 — get that wrong and every other row
+shears. Row-edge partial words stay byte-wise, and sprites under ~24 px wide keep
+the byte loop, which wins there.
+
+### Halve a rotation set with symmetry
+
+A top-down car is symmetric about its long axis, so 0–180° mirrored gives the
+other half: City Carnage gets **64 headings from 33 sprites** (5.6° steps) in
+10,800 bytes instead of a 691,200-byte bank. The flip is a **negative row stride**
+into the existing blit, so it costs nothing. It was only pixel-exact once every
+body width was **even** — an odd width centred in an even box sits half a pixel
+off, which made six of twelve cars visibly asymmetric.
+
+## Don't busy-wait for the flip: the deferred swap
+
+When frames sit near a VBlank boundary, the boundary has **positive feedback**: a
+frame that slips to 4 VBlanks must then simulate 4 ticks of catch-up, which makes
+the next frame longer too. Kengeki's fix:
+
+1. write the framebuffer-swap (FS) bit and **snapshot the palette**;
+2. immediately run the elapsed ticks and **record the next frame** (transform,
+   clip, sort) while the swap is still pending;
+3. **block only at the first framebuffer write** (an `fb_acquire` hook called by
+   every drawing entry point), and let the **VBlank IRQ upload CRAM** on the blank
+   in which the frame swaps in.
+
+Measured as a histogram of frame intervals (frames hashed in the harness): 3-/4-
+VBlank frames went from 129/119 to 200/62, **17.3 → 18.7 fps**, with no rendering
+change. Measure intervals, not just the mean — the histogram shows which boundary
+you're fighting.
+
+## A frame-time governor: shed effects first, then detail
+
+City Carnage holds a target rate under load with a governor driven by real frame
+cost from the SH-2 **free-running timer**:
+
+- **Effects first**: as the average cost crosses 50 / 58 / 70 ms, smoke, sparks
+  and fireball staggering thin to ¾, ½, ¼ density. The world (buildings, cars,
+  HUD) is never touched.
+- **Then geometry LOD on the same steps**: drop walls beyond 9 cells, rasterise
+  the rest in 2-px bands, finally pull them in to 6 cells at ¾ height — the
+  skyline and every roof stay; the *shape* of the extrusion gives way.
+- **Hysteresis**: drop a step at once; earn one back only after 90 consecutive
+  calm frames, so density can't pump.
+- **Fixed-point averaging**: an integer average left a dead band ~3 ms below every
+  threshold once its correction truncated to zero; average in quarter-ms.
+
+Two traps worth a test each: it once shipped **dead** — a leftover bisect `return`
+at the top of the function — so a **wiring test** builds ROMs that pretend every
+frame cost 80 ms and 45 ms and reads the chosen step off the HUD; and **PicoDrive
+has no free-running timer**, so the governor never engages there — its logic is
+pinned by a Python mirror test derived from the header constants.
+
+**Show milliseconds, not Hz.** Because the rate is quantised to 60/n, "20 Hz"
+covers anything from 33.4 to 50 ms — and whether removing 20% of the work reaches
+30 Hz depends entirely on which. City Carnage's readout shows average and peak
+frame cost in ms beside the Hz; Fight For Life and Kengeki keep `-DPERF_DEBUG` /
+`TSD_SHOW_FPS` builds for the same purpose.
+
+## Splitting the frame across both SH-2s
+
+Three patterns, each shipped:
+
+- **Disjoint row bands with an adaptive split** (Kengeki): the master records the
+  frame (transform, clip, depth buckets); then both CPUs run the same rasteriser on
+  `[0, split)` and `[split, 224)`. Whichever finished first takes **2 more rows
+  next frame**. A host test (`split_test.c`) proves banded output is pixel-identical
+  to a single pass over 10 stages × 14 split rows. 32 vs 44 VBlanks per 10 frames —
+  the largest single step in its log.
+- **Two-ended work stealing without atomics** (Fight For Life): the slave takes
+  floor rectangles from the bottom of a list, the master from the top once its own
+  transforms are done; each writes its next index through the cache-through alias
+  before drawing and stops when it passes the other's. At the meeting point both
+  may draw the same rectangle — harmless, because the rectangles are disjoint and
+  the pixels identical. 15 → 20 fps in every arena.
+- **Job hand-off** (Fight For Life): the master writes job and camera state
+  (write-through, so already in SDRAM), posts a command in COMM4, transforms
+  fighters meanwhile, and waits on COMM4 before the painter flush; the slave
+  purges its cache, draws, clears COMM4.
+
+## Run hot code from SDRAM
+
+Kengeki copies **all game code and tables into SDRAM** at boot (via `mars.ld`'s
+`.data`), leaving only crt0 and PCM in ROM — part of its first big jump (90 → 68
+VBlanks/10 frames, with run-length Gouraud and reciprocal slopes). Cartridge ROM is
+slower and contended with the other CPUs; SDRAM is cached. Budget it: 256 KiB holds
+code, `.bss` and both stacks.
+
+## Profiling: what PicoDrive can and can't tell you
+
+- **Cycle profile per PC**: rebuild PicoDrive with the SH-2 **interpreter**
+  (`make -f Makefile.libretro use_sh2drc=0`) plus a two-line patch in
+  `cpu/sh2/mame/sh2pico.c` that accumulates the master's cycles per SDRAM PC; dump
+  it from the harness and symbolise with `sh-elf-nm -n` (Kengeki).
+- **Profile by subtraction**: debug builds that skip render stages by bitmask
+  (`-DTSD_PROF=mask`: background, arena, fighters, sorted raster) or effects
+  (`TSD_FX_NO_*`), and a `TSD_BENCH` boot that prints a subsystem timing table.
+  Variant flags aren't tracked by Make — build them in their own object directory
+  (see `testing.md`) or `touch` the sources.
+- **Its blind spots**, each of which hid a real bug or a misleading number in these
+  ports: no **SH-2 cache** or **SDRAM wait-state** model (timing ≈ instruction
+  count — Fight For Life), no **RV bus contention** (City Carnage's silent boot),
+  no **free-running timer** (frame-cost readouts and governors read a fallback
+  value). Kengeki notes PicoDrive clocks the SH-2 at 2.4× the 68000 (~18.4 MHz
+  effective with modelled memory costs) — a reasonable stand-in. Treat emulator
+  frame counts as **relative A/B evidence** and confirm absolute numbers on
+  hardware.
+- **Validate the readout itself**: City Carnage's fps OCR assumed a fixed digit
+  offset and reported "80 fps" off a counter that read 20. Search for the glyph
+  alignment and fail loudly rather than return a plausible wrong number.

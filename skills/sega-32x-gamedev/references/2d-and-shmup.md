@@ -153,3 +153,22 @@ software. The two techniques:
 
 This is what makes an RM2K **Pictures** layer (ShowPicture / MovePicture /
 ErasePicture) and cutscene zoom-fades work on hardware with no blitter.
+
+## Sprite animation details that read as bugs when wrong
+
+From a Mr. Boom port's playtest fixes:
+
+- **Advance walk cycles by distance covered**, not elapsed frames, so speed-ups
+  don't make characters moonwalk; give the cycle real contact and lead frames.
+- **Carry sub-pixel speed** in a fixed-point accumulator; rounding per-frame speed
+  up to whole pixels collapses every slow speed to the same rate.
+- **Stagger blink phases** (spawn invincibility) per character and keep them short
+  — a shared phase made the whole roster vanish on the same frames.
+- **Put a sprite's feet in the cell the collision grid says it occupies**; a sprite
+  drawn 8 px high hid the cell the player was walking into.
+- **Give status effects a visible tell.** A "slow" disease that quartered walking
+  speed looked like the console hitching until the HUD flashed an icon for it.
+- **Quantise imported art to a small sub-palette** when every graphic shares one
+  256-colour CRAM: the title logo first came out at 256 colours and would have
+  starved everything else; 12 was enough. Build all assets from **one shared
+  palette instance**, or separately built tools hand back mismatched indices.

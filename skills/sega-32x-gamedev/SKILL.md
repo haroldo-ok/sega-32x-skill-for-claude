@@ -54,6 +54,13 @@ Pick a **rendering family** for the game:
   battery-backed SRAM saves.
 - **Pseudo-3D from sprites** (pre-baked view angles or sprite-stacking; racers,
   driving games) → `references/software-3d.md`.
+- **Extruded top-down "fake 3D"** (a GTA-style city: roofs scaled about the
+  vanishing point, edge-inward painter order, no z-buffer) →
+  `references/software-3d.md`.
+- **Hybrid: Mega Drive VDP + 32X overlay** (the 68000 draws the world with Genesis
+  tilemaps and sprites from an SH-2 display list; the 32X framebuffer carries the
+  HUD) → `references/architecture.md`. Verified in PicoDrive; check layer
+  compositing on hardware before relying on it.
 
 
 For **worked examples** of complete 32X ports (a DOS software-3D racer, HTML5
@@ -63,7 +70,11 @@ asset pipeline), see `references/examples.md`.
 
 For **sound**, see `references/audio.md` (PWM stereo FIFO, a software voice
 mixer, the framebuffer-redraw-starves-the-FIFO gotcha, and how to actually
-verify audio via PCM capture + a spectral fingerprint).
+verify audio via PCM capture + a spectral fingerprint). **For anything that will
+run on a real 32X, feed PWM from the slave SH-2 by DMA from ping-pong buffers**
+(the Doom 32X Resurrection recipe): driving it one sample at a time from an
+interrupt has verified fine in PicoDrive and been **silent on real hardware**, so
+emulator audio capture is necessary but not sufficient.
 
 ## Definition of done (do not stop early)
 
@@ -235,6 +246,26 @@ When a ROM compiles but shows black, check in this order (details in
    frame → palette-0 tell → cycle-colour hang test → minimal boot → isolate
    render vs logic → `cmp` the ROMs → rebuild from known-good) rather than
    guessing.
+8. **Vectors in the ELF but not in the raw ROM** — a non-loadable `.sdata` makes
+   the boot ROM copy padding instead of the SH-2 vector tables. Mark the section
+   `"aw",@progbits` and have `verify_rom.py` check the reset vectors are present in
+   the module-data payload (see `references/toolchain-and-build.md`).
+9. **FM never set, or set too late** — PicoDrive silently drops SH-2 VDP/CRAM
+   writes until the adapter FM bit is set; granting it only after the handshake
+   deadlocks both sides (`references/architecture.md`).
+10. **No initialised data at all** — the master's boot BIOS copies `.data` with a
+    decrement-by-4 loop that **underflows when `__data_size` is 0** and overwrites
+    all of SDRAM before your code runs. Keep a small initialised global (16 bytes is
+    enough) in every project.
+11. **The Mega Drive layer is covering the 32X** — over real (non-backdrop) Genesis
+    pixels the 32X pixel wins only if `CRAM bit 15 XOR DISPMODE PRI` is set.
+    Uninitialised Genesis VRAM plus the wrong combination hides a good frame; blank
+    the Genesis planes at boot (`references/architecture.md`).
+
+Make the boot **self-locating**: have `crt0` and `main` write numbered stage
+markers (entry, VBR, bss-clear, handshake, FM-set, …, frame-loop-alive; 0xE for an
+exception, 0xF for a stray IRQ) into a COMM word, so the harness can name the
+stage a dead boot stopped at in one read (`references/testing.md`).
 
 If instead the ROM **draws once and then hangs**, it's a *hang*, not a black
 screen: build a per-frame **heartbeat square** (behind a debug flag) — if it
@@ -251,8 +282,11 @@ ROM-banking / 32X-CD question before freezing the asset address format — see
 When asked to "optimize the code":
 
 - Hoist invariant work **out of loops**; precompute tables.
-- Use **bit-shifts and masks** instead of `*`, `/`, `%` by powers of two; the
-  SH-2 has no fast hardware divide.
+- Use **bit-shifts and masks** instead of `*`, `/`, `%` by powers of two — but
+  know that the SH-2 has **no barrel shifter**: only shifts by 1, 2, 8 and 16 are
+  native, and GCC turns a signed `>> 14` (or any variable shift) into a libgcc
+  call (`___ashiftrt_r4_*`). Rewrite hot ones as `(x << k) >> 16` or use Q16, and
+  check with `sh-elf-nm *.o | grep ashiftrt` (worth 9 → 12 fps in one port).
 - Use **fixed-point** (e.g. 16.16), never floating point, in hot paths.
 - **Offload** a parallel workload to the slave SH-2 via the COMM registers.
 - Mark hot, DMA-touched routines with the cache-aligned section attribute (see
@@ -268,6 +302,10 @@ When asked to "optimize the code":
   scenes use **dirty-rectangle rendering over a cached background** (per-framebuffer
   dirty lists; HUD cached by content hash) — full playbook in
   `references/optimization.md`.
+- **Treat PicoDrive timings as relative.** It models neither the SH-2 cache, SDRAM
+  wait states, RV bus contention, nor the free-running timer; each hid a real bug
+  or skewed a number in a shipped port. Compare A/B in the emulator, confirm on
+  hardware.
 - Look at d32xr's `r_phase*.c`, `sh2_*.s`, and `marsnew.c` for concrete idioms.
 
 ## Bundled resources
